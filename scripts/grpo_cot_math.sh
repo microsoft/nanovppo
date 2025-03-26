@@ -28,7 +28,7 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     -o ${DIR}/${NAME}_42 \
     -t 1.0 \
     -k 8 \
-    --lr 1e-5 \
+    --lr 3e-5 \
     -a grpo \
     --t500 \
     --fast \
@@ -40,5 +40,5 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     --maxstp 12000 \
     --offepc 1 \
     -s 42 \
-    --kl_ctl 1e-5 \
+    --kl_ctl 1e-6 \
     --evalevery 200
