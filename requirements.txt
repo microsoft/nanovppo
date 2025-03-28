@@ -1,5 +1,4 @@
 sglang[all]
-vllm==0.6.5
 torch==2.5.1
 transformers==4.47.0
 numpy
