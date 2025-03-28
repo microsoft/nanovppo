@@ -404,8 +404,6 @@ def repeat(ary: List[Any], k):
 
 
 def pack(ary: List[Any], k):
-    import copy
-
     return [ary[i : i + k] for i in range(0, len(ary), k)]
 
 

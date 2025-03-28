@@ -126,7 +126,10 @@ class SGLGeneratorClient:
                 )
             )
 
-        results = pack(results, n)
+        outputs, finished = zip(*results)
+        outputs = pack([o[0] for o in outputs], n)
+        finished = pack([f[0] for f in finished], n)
+        results = zip(outputs, finished)
 
         outputs = []
         finished = []
