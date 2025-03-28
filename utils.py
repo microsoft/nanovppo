@@ -6,7 +6,7 @@ import math
 import os
 from typing import List, Dict, Any
 from tqdm import tqdm
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 
 DEFAULT_TEMP = 0.5
@@ -355,6 +355,24 @@ class CosineWarmupScheduler(_LRScheduler):
         return new_lrs
 
 
+def param_ema(P, model, eta):
+    for (name, param) in model.named_parameters():
+        P[name].data = \
+            eta * P[name] + (1 - eta) * param.data.to("cpu")
+
+        param.data.copy_(P[name].to(param.data.device))
+
+
+def copy_model_param(model):
+    copy_params = {}
+
+    for (name, param) in model.named_parameters():
+        copy_params[name] = param.data.to("cpu")
+        del param
+
+    return copy_params
+
+
 def setup_output_directory(output_dir: str):
     import os
     import shutil
@@ -383,6 +401,12 @@ def repeat(ary: List[Any], k):
     import copy
 
     return [copy.deepcopy(a) for a in ary for _ in range(k)]
+
+
+def pack(ary: List[Any], k):
+    import copy
+
+    return [ary[i: i + k] for i in range(0, ary, k)]
 
 
 def flatten(ary: List[List[Any]]):

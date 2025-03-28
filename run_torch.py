@@ -43,6 +43,8 @@ from utils import (
     DEFAULT_TEMP,
     AccumulatorDict,
     CosineWarmupScheduler,
+    copy_model_param,
+    param_ema,
     print_metrics,
     save_args,
     setup_output_directory,
@@ -221,6 +223,9 @@ def train(local_rank, world_size, args):
     else:
         raise ValueError('Unknown scheduler.')
 
+    if args.ema > 0.:
+        ema_params = copy_model_param(algo.model.module)
+
     ddp_state.print("Scheduler set! Total steps:", total_steps)
 
     with ddp_state.main_process_first():
@@ -355,6 +360,10 @@ def train(local_rank, world_size, args):
                     global_step += 1
                     eval_step = eval_step or ((global_step + 1) % args.evalevery == 0 or args.evalevery == -1)
 
+                    if args.ema:
+                        param_ema(ema_params, algo.model.module, args.ema)
+
+
             ddp_state.print(
                 f"Epoch: {epoch}, Off Epoch: {off_epoch}, "
                 f"Step: {global_step}, {algo.__class__.__name__}, "
@@ -472,6 +481,12 @@ if __name__ == "__main__":
         help="Optimizer to use for training",
         default="adamw",
         choices=["adamw", "adamw8bit"],
+    )
+    parser.add_argument(
+        "--ema",
+        type=float,
+        help="Apply ema to the model parameters",
+        default=0.,
     )
     parser.add_argument(
         "--evalevery", type=int, help="Eval every N steps", default=1

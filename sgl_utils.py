@@ -18,7 +18,7 @@ from transformers import AutoTokenizer
 from vllm.worker.worker import Worker
 
 from ddp_utils import ddp_state
-from utils import DEFAULT_MAX_TOKENS, DEFAULT_TEMP
+from utils import DEFAULT_MAX_TOKENS, DEFAULT_TEMP, pack, repeat
 
 
 def wait_for_server_shutdown(base_url: str, timeout: int = None) -> None:
@@ -108,7 +108,8 @@ class SGLGeneratorClient:
             )
             for message in messages
         ]
-        
+        prompts = repeat(prompts, n)
+
         ddp_state.print("SGLang prompt:")
         ddp_state.print(prompts[0])
 
@@ -117,13 +118,15 @@ class SGLGeneratorClient:
                 tqdm.tqdm(
                     executor.map(
                         partial(
-                            send_request, temperature, top_p, max_tokens, n, self.port
+                            send_request, temperature, top_p, max_tokens, 1, self.port
                         ),
                         prompts,
                     ),
                     total=len(prompts),
                 )
             )
+
+        results = pack(results, n)
 
         outputs = []
         finished = []
