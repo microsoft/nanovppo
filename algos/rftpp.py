@@ -5,7 +5,7 @@ from typing import List, Dict
 import numpy as np
 
 from algos.algo import Request, RequestUtils
-from data_utils import create_joint_tensors, pad_query_and_response
+from datasets.data_utils import create_joint_tensors, pad_query_and_response
 from ddp_utils import rank_zero_only
 from gen_utils import GenerationBackend
 from utils import (

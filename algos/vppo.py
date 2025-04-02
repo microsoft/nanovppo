@@ -22,7 +22,7 @@ from utils import (
     flatten,
     compute_kl_divergence,
 )
-from data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
+from datasets.data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
 from algos.algo import Algo, Request, RequestUtils
 
 

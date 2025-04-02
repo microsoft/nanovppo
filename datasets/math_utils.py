@@ -311,7 +311,7 @@ def extract_math_answer(question, reasoning):
 
 
 def compute_math_reward(requests: List[Request]) -> List[float]:
-    from math_grader import grade_answer
+    from datasets.math_grader import grade_answer
 
     rewards = []
     for request in requests:
@@ -323,7 +323,7 @@ def compute_math_reward(requests: List[Request]) -> List[float]:
 
 
 def compute_lcot_math_reward(requests: List[Request]) -> List[float]:
-    from math_grader import grade_answer
+    from datasets.math_grader import grade_answer
 
     rewards = []
     for request in requests:
@@ -341,7 +341,7 @@ def compute_lcot_math_reward(requests: List[Request]) -> List[float]:
 
 
 def compute_qst_math_reward(requests: List[Request]) -> List[float]:
-    from math_grader import grade_answer
+    from datasets.math_grader import grade_answer
 
     rewards = []
     for request in requests:
@@ -384,6 +384,8 @@ def prepare_math_dataset(subset="all", split="test", subsample=None, template='c
         template = MATH_TEMPLATE
     elif template == 'qst':
         template = MATH_QUESTION_TEMPLATE
+    elif template == 'none':
+        template = "{}"
 
     # create array of all questions in dataset
     questions = []
@@ -411,7 +413,7 @@ def prepare_math_dataset(subset="all", split="test", subsample=None, template='c
 
 @rank_zero_only
 def eval_math(questions, answers, temperature=0.0, top_p=1.0, max_tokens=1024):
-    from math_grader import grade_answer
+    from datasets.math_grader import grade_answer
 
     if not isinstance(questions[0], list):
         # then create chat messages

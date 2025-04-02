@@ -18,9 +18,9 @@ from tqdm import tqdm
 from accelerate import Accelerator
 from algos.rftp import RFTP
 from algos.vppo import VPPO
-from arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
-from gsm8k_utils import compute_gsm8k_reward, eval_gsm8k, prepare_gsm8k_dataset
-from math_utils import (
+from datasets.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
+from datasets.gsm8k_utils import compute_gsm8k_reward, eval_gsm8k, prepare_gsm8k_dataset
+from datasets.math_utils import (
     compute_lcot_math_reward,
     compute_math_reward,
     compute_qst_math_reward,
@@ -29,7 +29,7 @@ from math_utils import (
 )
 from algos.rft import RFT
 from algos.grpo import GRPO
-from data_utils import (
+from datasets.data_utils import (
     MultiTensorDataset,
     chunk_text,
     get_dataloader,

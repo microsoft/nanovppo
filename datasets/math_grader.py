@@ -287,7 +287,7 @@ def grade_answer(*, given_answer: str = None, ground_truth: str = None) -> bool:
     OR
     (b) sympy can simplify the difference between the expressions to 0
     """
-    from math_utils import normalize_answer
+    from datasets.math_utils import normalize_answer
     
     if given_answer is None:
         return False
