@@ -17,7 +17,7 @@ from utils import (
     print_metrics,
     repeat,
 )
-from datasets.data_utils import create_joint_tensors
+from dataset.data_utils import create_joint_tensors
 from ddp_utils import rank_zero_only
 from algos.algo import Algo, Request, RequestUtils
 

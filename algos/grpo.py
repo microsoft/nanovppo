@@ -21,7 +21,7 @@ from utils import (
     compute_kl_divergence,
 )
 
-from datasets.data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
+from dataset.data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
 from gen_utils import GenerationBackend
 from algos.algo import Algo, Request, RequestUtils
 from algos.rft import RFT
