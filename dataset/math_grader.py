@@ -1,3 +1,6 @@
+"""Code from openai/prm800k
+"""
+
 import re
 import sympy
 from pylatexenc import latex2text
