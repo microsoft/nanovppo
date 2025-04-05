@@ -104,7 +104,7 @@ def eval_cd(questions, answers, temperature=0.0, top_p=1.0, max_tokens=1024):
 
     correct = []
     for i in range(len(results)):
-        is_correct = correctness_reward(results[i][0], answers[i])
+        is_correct = correctness_reward(results[i][0], answers[i][0], answers[i][1])
         correct.append(is_correct)
     return correct
 
