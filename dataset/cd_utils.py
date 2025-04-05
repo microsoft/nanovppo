@@ -117,11 +117,11 @@ def compute_cd_reward(requests: List[Request]) -> List[float]:
         answer_reward = correctness_reward(response, label[0], label[1])
         syntax_reward = format_reward(response)
         rewards.append((answer_reward, syntax_reward))
-    rewards = {
+    extra_rewards = {
         "answer_reward": [a for a, s in rewards],
         "syntax_reward": [s for a, s in rewards]
     }
-    return [a + s for a, s in rewards], rewards
+    return [a + s for a, s in rewards], extra_rewards
 
 
 def format_reward(completion: str) -> float:

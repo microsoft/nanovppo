@@ -165,7 +165,7 @@ class SGLGeneratorClient:
             model = model.module
 
         print("Serializing model...")
-        model.save_pretrained(f"/tmp/saved_model")
+        model.save_pretrained(f"/dev/shm/saved_model")
 
     @classmethod
     def get(cls):
@@ -179,10 +179,10 @@ class SGLGeneratorClient:
         if hasattr(model, "module"):
             model = model.module
 
-        model.save_pretrained("/tmp/saved_model")
+        model.save_pretrained("/dev/shm/saved_model")
         response = requests.post(
             f"http://localhost:{self.port}/update_weights_from_disk",
-            json={"model_path": "/tmp/saved_model"},
+            json={"model_path": "/dev/shm/saved_model"},
         )
         assert response.json()["success"] is True
 
