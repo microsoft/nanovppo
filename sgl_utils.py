@@ -4,7 +4,8 @@ import os
 import sys
 import threading
 import time
-from asyncio import subprocess, threads
+from asyncio import threads
+import subprocess
 from functools import partial
 from typing import List, Optional
 
