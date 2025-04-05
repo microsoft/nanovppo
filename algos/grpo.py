@@ -113,9 +113,9 @@ class GRPO(Algo):
         rewards = self.reward_func(evaluation_requests)
 
         if type(rewards) is tuple:
-            rewards = rewards[0]
             for key, value in rewards[1].items():
                 self.stats.accumulate("avg_" + key, np.mean(value))
+            rewards = rewards[0]
 
         RequestUtils.populate(evaluation_requests, rewards, "reward")
 
