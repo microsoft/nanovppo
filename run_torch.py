@@ -374,7 +374,7 @@ def train(local_rank, world_size, args):
                         )
                         or (
                             args.evaleverymode == "epoch"
-                            and micro_step == len(dataloader) - 1
+                            and (off_epoch + 1) % args.evalevery == 0
                         )
                     )
 
