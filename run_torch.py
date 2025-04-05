@@ -103,24 +103,24 @@ def train(local_rank, world_size, args):
     random.seed(args.s)
 
     # dataset setup + rewards
-    if args.dataset == 'math':
+    if args.dataset == "math":
         prepare_dataset = prepare_math_dataset
         eval_dataset = eval_math
-        if args.template == 'lcot':
+        if args.template == "lcot":
             reward_func = compute_lcot_math_reward
-        elif args.template == 'cot':
+        elif args.template == "cot":
             reward_func = compute_math_reward
         else:
             reward_func = compute_qst_math_reward
-    elif args.dataset == 'gsm8k':
+    elif args.dataset == "gsm8k":
         prepare_dataset = prepare_gsm8k_dataset
         eval_dataset = eval_gsm8k
         reward_func = compute_gsm8k_reward
-    elif args.dataset == 'arc':
+    elif args.dataset == "arc":
         prepare_dataset = prepare_arc_dataset
         eval_dataset = eval_arc
         reward_func = compute_arc_reward
-    elif args.dataset == 'cd':
+    elif args.dataset == "cd":
         prepare_dataset = prepare_cd_dataset
         eval_dataset = eval_cd
         reward_func = compute_cd_reward
@@ -211,7 +211,7 @@ def train(local_rank, world_size, args):
             acc_steps * ddp_state.num_processes
         )
 
-    if args.sch == 'cosine_with_warmup':
+    if args.sch == "cosine_with_warmup":
         scheduler = CosineWarmupScheduler(
             optimizer,
             max_lr=args.lr,
@@ -219,7 +219,7 @@ def train(local_rank, world_size, args):
             warmup_steps=0.03 * total_steps,
             max_steps=total_steps,
         )
-    elif args.sch == 'constant_with_warmup':
+    elif args.sch == "constant_with_warmup":
         scheduler = CosineWarmupScheduler(
             optimizer,
             max_lr=args.lr,
@@ -228,9 +228,9 @@ def train(local_rank, world_size, args):
             max_steps=total_steps,
         )
     else:
-        raise ValueError('Unknown scheduler.')
+        raise ValueError("Unknown scheduler.")
 
-    if args.ema > 0.:
+    if args.ema > 0.0:
         ema_params = copy_model_param(algo.model.module)
 
     ddp_state.print("Scheduler set! Total steps:", total_steps)
@@ -240,11 +240,13 @@ def train(local_rank, world_size, args):
             args.ss, split="train", subsample=args.subs, template=args.template
         )
         if args.t500:
-            if args.dataset != 'math':
+            if args.dataset != "math":
                 raise ValueError("t500 only available with MATH dataset!")
 
             test_queries, test_labels = prepare_dataset(
-                args.ss, split="500", template=args.template,
+                args.ss,
+                split="500",
+                template=args.template,
             )
         else:
             test_queries, test_labels = prepare_dataset(
@@ -365,11 +367,19 @@ def train(local_rank, world_size, args):
                     optimizer.zero_grad()
                     torch.cuda.empty_cache()
                     global_step += 1
-                    eval_step = eval_step or ((global_step + 1) % args.evalevery == 0 or args.evalevery == -1)
+                    eval_step = eval_step or (
+                        (
+                            args.evaleverymode == "step"
+                            and (global_step + 1) % args.evalevery == 0
+                        )
+                        or (
+                            args.evaleverymode == "epoch"
+                            and micro_step == len(dataloader) - 1
+                        )
+                    )
 
                     if args.ema:
                         param_ema(ema_params, algo.model.module, args.ema)
-
 
             ddp_state.print(
                 f"Epoch: {epoch}, Off Epoch: {off_epoch}, "
@@ -465,7 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", type=int, help="Seed", default=42)
     parser.add_argument("-a", type=str, help="Algorithm")
     parser.add_argument("--lr", type=float, help="Learning rate", default=1e-5)
-    parser.add_argument("--template", default='cot', help="Template type COT/LCOT/QST")
+    parser.add_argument("--template", default="cot", help="Template type COT/LCOT/QST")
     parser.add_argument("--epc", type=int, help="Number of epochs", default=10)
     parser.add_argument(
         "--onlbsz", type=int, help="Online batch size (per gpu)", default=32
@@ -493,10 +503,11 @@ if __name__ == "__main__":
         "--ema",
         type=float,
         help="Apply ema to the model parameters",
-        default=0.,
+        default=0.0,
     )
+    parser.add_argument("--evalevery", type=int, help="Eval every N mode", default=-1)
     parser.add_argument(
-        "--evalevery", type=int, help="Eval every N steps", default=1
+        "--evaleverymode", help="Eval every mode", type=str, default="epoch"
     )
     parser.add_argument(
         "--maxstp", type=int, help="Max number of steps, overrides --epc", default=-1
@@ -506,7 +517,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--maxtok", type=int, help="Number of tokens", default=DEFAULT_MAX_TOKENS
     )
-    parser.add_argument("--sch", type=str, help="Scheduler", default="constant_with_warmup")
+    parser.add_argument(
+        "--sch", type=str, help="Scheduler", default="constant_with_warmup"
+    )
     parser.add_argument("--dataset", type=str, help="Dataset", default="math")
     parser.add_argument("-b", type=str, help="Backend", default="sgl")
     parser.add_argument("--tpsz", type=int, help="Tensor parallel size", default=1)
@@ -515,7 +528,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fast", action="store_true", help="Use fast mode (no eval on epoch 0)"
     )
-    
+
     parser.add_argument(
         "--t500", action="store_true", help="Use 500 examples for MATH test."
     )

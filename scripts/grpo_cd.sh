@@ -25,8 +25,9 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     --onlbsz 64 \
     --offbsz 4 \
     --maxtok 1024 \
-    --maxstp 500 \
+    --epc 1000 \
     --offepc 1 \
     -s 42 \
     --kl_ctl 0.001 \
-    --evalevery 50
+    --evalevery 10 \
+    --evaleverymode epoch
