@@ -244,6 +244,9 @@ class GRPO(Algo):
             pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
 
             self.stats.accumulate(
+                "entropy", -((mb_logprobs * labels_mask).sum() / labels_mask.sum()).item()
+            )
+            self.stats.accumulate(
                 "kl_loss", masked_mean(per_token_kl, labels_mask, axis=1).mean().item()
             )
             return pg_loss
