@@ -1,5 +1,4 @@
-"""Adapted from https://github.com/McGill-NLP/nano-aha-moment/blob/main/nano_r1_script.py.
-"""
+"""Adapted from https://github.com/McGill-NLP/nano-aha-moment/blob/main/nano_r1_script.py."""
 
 import re
 from datasets import load_dataset
@@ -27,56 +26,61 @@ PROMPT_TEMPLATE = (
 )
 
 
-def prepare_cd_dataset(subset="all", split="test", subsample=None, template='cot'):
-   data = load_dataset('Jiayi-Pan/Countdown-Tasks-3to4')['train']
-   if split == 'test':
+def prepare_cd_dataset(subset="all", split="test", subsample=None, template="cot"):
+    data = load_dataset("Jiayi-Pan/Countdown-Tasks-3to4")["train"]
+    if split == "test":
         data_indices = np.random.randint(0, len(data), 100)
         data = data.select(data_indices)
-   else:
+    else:
         data_indices = np.random.randint(0, len(data), 10000)
         data = data.select(data_indices)
 
-   formatted_data = []
-   for example in data:
-       # Convert list of messages to a single string prompt.
-       prompt_str = [
-           {"role": "system", "content": SYSTEM_MESSAGE},
-           {"role": "user", "content": PROMPT_TEMPLATE.format(numbers=example["nums"], target=example["target"])},
-       ]
-       # need to compute reward with the numbers and target
-       formatted_data.append((prompt_str, (example['nums'], example['target'])))
-   return zip(*formatted_data)
+    formatted_data = []
+    for example in data:
+        # Convert list of messages to a single string prompt.
+        prompt_str = [
+            {"role": "system", "content": SYSTEM_MESSAGE},
+            {
+                "role": "user",
+                "content": PROMPT_TEMPLATE.format(
+                    numbers=example["nums"], target=example["target"]
+                ),
+            },
+        ]
+        # need to compute reward with the numbers and target
+        formatted_data.append((prompt_str, (example["nums"], example["target"])))
+    return zip(*formatted_data)
 
 
 def extract_answer_from_model_output(text):
-   """
-   Extracts the value from the last <answer> tag in the text.
+    """
+    Extracts the value from the last <answer> tag in the text.
 
-   Args:
-       text (str): The model-generated text containing XML-style <answer> tags.
+    Args:
+        text (str): The model-generated text containing XML-style <answer> tags.
 
-   Returns:
-       str or None: The content inside the <answer> tags, or None if no valid answer is found.
+    Returns:
+        str or None: The content inside the <answer> tags, or None if no valid answer is found.
 
-   Explanation:
-       1. Splits the text on the <answer> tag to isolate content after the tag.
-       2. Checks if at least one <answer> tag exists in the text.
-       3. For the last <answer> segment:
-          - Verifies it contains a closing </answer> tag.
-          - Extracts only the content between the tags.
-       4. Returns None if the answer is empty (just "...") or if tags are missing.
-   """
-   # Split on <answer> and take everything after the last occurrence
-   parts = text.split("<answer>")
-   if len(parts) < 2:  # No <answer> tag found
-       return None
-   last_part = parts[-1]
+    Explanation:
+        1. Splits the text on the <answer> tag to isolate content after the tag.
+        2. Checks if at least one <answer> tag exists in the text.
+        3. For the last <answer> segment:
+           - Verifies it contains a closing </answer> tag.
+           - Extracts only the content between the tags.
+        4. Returns None if the answer is empty (just "...") or if tags are missing.
+    """
+    # Split on <answer> and take everything after the last occurrence
+    parts = text.split("<answer>")
+    if len(parts) < 2:  # No <answer> tag found
+        return None
+    last_part = parts[-1]
 
-   # Extract content up to </answer>
-   if "</answer>" not in last_part:
-       return None
-   answer = last_part.split("</answer>")[0].strip()
-   return None if answer == "..." else answer
+    # Extract content up to </answer>
+    if "</answer>" not in last_part:
+        return None
+    answer = last_part.split("</answer>")[0].strip()
+    return None if answer == "..." else answer
 
 
 @rank_zero_only
@@ -101,7 +105,7 @@ def eval_cd(questions, answers, temperature=0.0, top_p=1.0, max_tokens=1024):
     correct = []
     for i in range(len(results)):
         try:
-            is_correct = correctness_reward(results[i][0], answers[i]) > 0.
+            is_correct = correctness_reward(results[i][0], answers[i]) > 0.0
             correct.append(is_correct)
         except:
             continue
@@ -121,10 +125,14 @@ def compute_cd_reward(requests: List[Request]) -> List[float]:
 
 def format_reward(response, **kwargs):
     score = 0.0
-    if "<think>" in response: score += 0.2
-    if "</think>" in response: score += 0.2
-    if "<answer>" in response: score += 0.2
-    if "</answer>" in response: score += 0.2
+    if "<think>" in response:
+        score += 0.2
+    if "</think>" in response:
+        score += 0.2
+    if "<answer>" in response:
+        score += 0.2
+    if "</answer>" in response:
+        score += 0.2
     return score
 
 
