@@ -32,7 +32,7 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     -a grpo \
     --t500 \
     --fast \
-    --template lcot \
+    --template cot \
     --dataset math \
     --onlbsz 16 \
     --offbsz 8 \
@@ -41,4 +41,5 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     --offepc 1 \
     -s 42 \
     --kl_ctl 1e-6 \
-    --evalevery 200
+    --evalevery 200 \
+    --ema 0.4
