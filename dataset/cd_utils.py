@@ -147,6 +147,7 @@ def correctness_reward(answer: str, nums: List[int], target: int) -> float:
     """
     try:
         # Extract all numbers from the equation
+        answer = extract_answer_from_model_output(answer)
         used_numbers = [int(n) for n in re.findall(r"\d+", answer)]
 
         # Check if all numbers are used exactly once
