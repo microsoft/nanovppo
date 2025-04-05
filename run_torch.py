@@ -18,6 +18,7 @@ from tqdm import tqdm
 from accelerate import Accelerator
 from algos.vppo import VPPO
 from dataset.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
+from dataset.cd_utils import compute_cd_reward, eval_cd, prepare_cd_dataset
 from dataset.gsm8k_utils import compute_gsm8k_reward, eval_gsm8k, prepare_gsm8k_dataset
 from dataset.math_utils import (
     compute_lcot_math_reward,
@@ -36,7 +37,7 @@ from dataset.data_utils import (
 from transformers.trainer_pt_utils import get_parameter_names
 from sgl_utils import SGLGenerator, is_server_up
 from ddp_utils import init_ddp, gather_and_concatenate
-from gen_utils import GenerationBackend, GeneratorClient
+from gen_utils import GeneratorClient, GeneratorClient
 from utils import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMP,
@@ -117,6 +118,12 @@ def train(local_rank, world_size, args):
         prepare_dataset = prepare_arc_dataset
         eval_dataset = eval_arc
         reward_func = compute_arc_reward
+    elif args.dataset == 'cd':
+        prepare_dataset = prepare_cd_dataset
+        eval_dataset = eval_cd
+        reward_func = compute_cd_reward
+    else:
+        raise ValueError("Unknown dataset!")
 
     if args.o == "auto":
         # create a timestamp
@@ -152,7 +159,7 @@ def train(local_rank, world_size, args):
         device=ddp_state.device,
         **algo_kwargs,
     )
-    # algo.model.gradient_checkpointing_enable()
+    algo.model.gradient_checkpointing_enable()
     algo.model = DDP(
         algo.model,
         device_ids=[ddp_state.local_process_index],
@@ -440,7 +447,7 @@ def train(local_rank, world_size, args):
                 print("Best model saved!")
 
             # update the weights of the data generator after the epoch
-            GenerationBackend.get().load_weights(algo.model)
+            GeneratorClient.get().load_weights(algo.model)
 
         ddp_state.wait_for_everyone()
 

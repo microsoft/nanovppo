@@ -22,7 +22,7 @@ from utils import (
 )
 
 from dataset.data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
-from gen_utils import GenerationBackend
+from gen_utils import GeneratorClient
 from algos.algo import Algo, Request, RequestUtils
 from algos.rft import RFT
 
@@ -80,7 +80,7 @@ class GRPO(Algo):
 
     @torch.no_grad
     def gather_episodes(self, messages, labels):
-        engine = GenerationBackend.get()
+        engine = GeneratorClient.get()
 
         # Gather first set of completions
         responses, finished = engine.chat(

@@ -9,7 +9,7 @@ import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ddp_utils import rank_zero_only
-from gen_utils import GenerationBackend
+from gen_utils import GeneratorClient
 from utils import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMP,
@@ -343,7 +343,7 @@ def compute_vppo_value_estimation(
                 )
             )
 
-    vppo_responses, vppo_finished = GenerationBackend.get().chat(
+    vppo_responses, vppo_finished = GeneratorClient.get().chat(
         [r.messages for r in vppo_requests],
         temperature=temperature,
         n=num_samples,
@@ -484,7 +484,7 @@ class VPPO(Algo):
         messages,
         labels,
     ):
-        vllm = GenerationBackend.get()
+        vllm = GeneratorClient.get()
 
         responses, finished = vllm.chat(
             messages,

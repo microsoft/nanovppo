@@ -9,7 +9,7 @@ import sys
 
 from algos.algo import Request
 from ddp_utils import rank_zero_only
-from gen_utils import GenerationBackend
+from gen_utils import GeneratorClient
 
 
 GSM8K_COT = """
@@ -142,7 +142,7 @@ def eval_gsm8k(questions, answers, temperature=0.0, top_p=1.0, max_tokens=1024):
     print(f"Example answer: {answers[0]}")
     print("====================================")
 
-    results = GenerationBackend.get().chat(
+    results = GeneratorClient.get().chat(
         questions,
         temperature=temperature,
         top_p=top_p,

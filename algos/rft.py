@@ -5,7 +5,7 @@ import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 
-from gen_utils import GenerationBackend
+from gen_utils import GeneratorClient
 from ddp_utils import ddp_state
 from utils import (
     DEFAULT_MAX_TOKENS,
@@ -80,7 +80,7 @@ class RFT(Algo):
         messages: List[List[Dict[str, str]]],
         labels: List[str],
     ):
-        engine = GenerationBackend.get()
+        engine = GeneratorClient.get()
 
         # Gather first set of completions
         responses, finished = engine.chat(
