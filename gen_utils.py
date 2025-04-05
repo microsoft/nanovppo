@@ -1,22 +1,20 @@
 
-class GenerationBackend:
-    backend = "vllm"
+class GeneratorClient:
+    backend = "sgl"
 
     @classmethod
     def init(cls, backend, **kwargs):
         cls.backend = backend
-        if cls.backend == "vllm":
-            from vllm_utils import VLLMGenerator
-            VLLMGenerator(**kwargs)
-        elif cls.backend == "sgl":
+        if cls.backend == "sgl":
             from sgl_utils import SGLGeneratorClient
             SGLGeneratorClient(**kwargs)
+        else:
+            raise ValueError(f"Unsupported backend: {cls.backend}")
 
     @classmethod
     def get(cls):
-        if cls.backend == "vllm":
-            from vllm_utils import VLLMGenerator
-            return VLLMGenerator.get()
-        elif cls.backend == "sgl":
+        if cls.backend == "sgl":
             from sgl_utils import SGLGeneratorClient
             return SGLGeneratorClient.get()
+        else:
+            raise ValueError(f"Unsupported backend: {cls.backend}")

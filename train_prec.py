@@ -16,10 +16,12 @@ from datasets import load_dataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from accelerate import Accelerator
+from algos.prec import PREC
+from algos.rftp import RFTP
 from algos.vppo import VPPO
-from dataset.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
-from dataset.gsm8k_utils import compute_gsm8k_reward, eval_gsm8k, prepare_gsm8k_dataset
-from dataset.math_utils import (
+from datasets.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
+from datasets.gsm8k_utils import compute_gsm8k_reward, eval_gsm8k, prepare_gsm8k_dataset
+from datasets.math_utils import (
     compute_lcot_math_reward,
     compute_math_reward,
     compute_qst_math_reward,
@@ -28,15 +30,15 @@ from dataset.math_utils import (
 )
 from algos.rft import RFT
 from algos.grpo import GRPO
-from dataset.data_utils import (
+from datasets.data_utils import (
     MultiTensorDataset,
     chunk_text,
     get_dataloader,
 )
+from launch_sgl import SGLGenerator, is_server_up
 from transformers.trainer_pt_utils import get_parameter_names
-from sgl_utils import SGLGenerator, is_server_up
 from ddp_utils import init_ddp, gather_and_concatenate
-from gen_utils import GenerationBackend, GeneratorClient
+from gen_utils import GenerationBackend
 from utils import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMP,
@@ -64,9 +66,7 @@ models = {
 
 
 algos = {
-    "rft": RFT,
-    "grpo": GRPO,
-    "vppo": VPPO,
+    "prec": PREC,
 }
 
 
@@ -90,7 +90,7 @@ def train(local_rank, world_size, args):
         generator = SGLGenerator(models[args.m], args.s)
 
     # wait for generator to be up!
-    GeneratorClient.init(args.b, model_name=models[args.m], seed=args.s)
+    GenerationBackend.init(args.b, model_name=models[args.m], seed=args.s)
 
     # output directory
     torch.manual_seed(args.s)
@@ -100,23 +100,12 @@ def train(local_rank, world_size, args):
     random.seed(args.s)
 
     # dataset setup + rewards
-    if args.dataset == 'math':
-        prepare_dataset = prepare_math_dataset
-        eval_dataset = eval_math
-        if args.template == 'lcot':
-            reward_func = compute_lcot_math_reward
-        elif args.template == 'cot':
-            reward_func = compute_math_reward
-        else:
-            reward_func = compute_qst_math_reward
-    elif args.dataset == 'gsm8k':
-        prepare_dataset = prepare_gsm8k_dataset
-        eval_dataset = eval_gsm8k
-        reward_func = compute_gsm8k_reward
-    elif args.dataset == 'arc':
-        prepare_dataset = prepare_arc_dataset
-        eval_dataset = eval_arc
-        reward_func = compute_arc_reward
+    if args.dataset == 'wild':
+        prepare_dataset = prepare_wild
+        eval_dataset = eval_wild
+        reward_func = 'logp'
+    else:
+        raise ValueError("Unknown dataset!")
 
     if args.o == "auto":
         # create a timestamp
@@ -190,10 +179,7 @@ def train(local_rank, world_size, args):
         )
     ddp_state.print(torch.cuda.mem_get_info())
 
-    if args.a in ["rloo", "grpo", "vppo"]:
-        num_ex = onl_batch_size * args.k
-    else:
-        num_ex = onl_batch_size
+    num_ex = onl_batch_size * args.k
 
     if max_steps > 0:
         total_steps = max_steps
@@ -230,17 +216,9 @@ def train(local_rank, world_size, args):
         all_queries, all_labels = prepare_dataset(
             args.ss, split="train", subsample=args.subs, template=args.template
         )
-        if args.t500:
-            if args.dataset != 'math':
-                raise ValueError("t500 only available with MATH dataset!")
-
-            test_queries, test_labels = prepare_dataset(
-                args.ss, split="500", template=args.template,
-            )
-        else:
-            test_queries, test_labels = prepare_dataset(
-                args.ss, split="test", subsample=args.subs, template=args.template
-            )
+        test_queries, test_labels = prepare_dataset(
+            args.ss, split="test", subsample=args.subs, template=args.template
+        )
 
         # Form a small subset of the training data for evaluation
         train_subsample = np.random.choice(
@@ -270,28 +248,6 @@ def train(local_rank, world_size, args):
         )
         queries_batch = [all_queries[i] for i in sample_indices]
         labels_batch = [all_labels[i] for i in sample_indices]
-
-        if not args.fast and global_step == 0:
-            acc_math = np.mean(
-                eval_dataset(test_queries, test_labels, temperature=0.35, top_p=0.9)
-            )
-            tracc_math = np.mean(
-                eval_dataset(train_queries, train_labels, temperature=0.35, top_p=0.9)
-            )
-
-            if ddp_state.is_main_process:
-                print("====================================")
-                print(f"Initial Accuracy: {tracc_math}, Test Accuracy: {acc_math}")
-                print("====================================")
-
-            training_stats.append(
-                {
-                    "epoch": epoch,
-                    "step": global_step,
-                    "train_accuracy": tracc_math,
-                    "test_accuracy": acc_math,
-                }
-            )
 
         # create dataset out of gathered episodes
         with ddp_state.split_between_processes(
@@ -401,25 +357,9 @@ def train(local_rank, world_size, args):
         if ddp_state.is_main_process:
             print("====================================")
             print(
-                f"Step {global_step}, Train Accuracy: {tracc_math}, Test Accuracy: {acc_math}, Max Test Acc: {best_acc}"
+                f"Step {global_step},"
             )
             print(training_stats[-1])
-            print(
-                "Train Accuracy So Far:",
-                print_metrics(
-                    [
-                        t["train_accuracy"]
-                        for t in training_stats
-                        if "train_accuracy" in t
-                    ]
-                ),
-            )
-            print(
-                "Test Accuracy So Far:",
-                print_metrics(
-                    [t["test_accuracy"] for t in training_stats if "test_accuracy" in t]
-                ),
-            )
             print(
                 "Reward So Far:",
                 print_metrics([t.get("avg_reward", 0) for t in training_stats]),
