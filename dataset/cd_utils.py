@@ -116,21 +116,57 @@ def compute_cd_reward(requests: List[Request]) -> List[float]:
         label = request.label
         answer_reward = correctness_reward(response, label[0], label[1])
         syntax_reward = format_reward(response)
-        rewards.append(answer_reward + syntax_reward)
-    return rewards
+        rewards.append((answer_reward, syntax_reward))
+    rewards = {
+        "answer_reward": [a for a, s in rewards],
+        "syntax_reward": [s for a, s in rewards]
+    }
+    return [a + s for a, s in rewards], rewards
 
 
-def format_reward(response, **kwargs):
-    score = 0.0
-    if "<think>" in response:
-        score += 0.2
-    if "</think>" in response:
-        score += 0.2
-    if "<answer>" in response:
-        score += 0.2
-    if "</answer>" in response:
-        score += 0.2
-    return score
+def format_reward(completion: str) -> float:
+    """
+    Format: <think>...</think><answer>...</answer>
+
+    Also checks that the content within <answer>...</answer> conforms to a
+    specified pattern (only digits, + - * / ( ) . and whitespace).
+
+    Args:
+        completion (str): Generated output
+        EOS_TOKEN (str): End of sequence token
+
+    Returns:
+        float: Reward score
+    """
+    # Define the allowed pattern (only numbers, +, -, *, /, (, ), ., and whitespace)
+    allowed_pattern = r"^[\d+\-*/().\s]+$"
+
+    try:
+        # Check if the format is correct
+        # Pattern means:
+        # 1) <think>...contents not including other <think> tags...</think>
+        # 2) \n
+        # 3) <answer>...anything...</answer>
+        regex = r"^<think>([^<]*(?:<(?!/?think>)[^<]*)*)<\/think>\n<answer>([\s\S]*?)<\/answer>$"
+        match = re.search(regex, completion, re.DOTALL)
+
+        if match is None or len(match.groups()) != 2:
+            # Format is incorrect
+            return 0.0
+        else:
+            # Extract the content inside <answer>...</answer>
+            answer_content = match.group(2).strip()
+
+            # Check if answer content matches the allowed pattern
+            if not re.match(allowed_pattern, answer_content):
+                # If it doesn't match, reward is 0.5
+                return 0.5
+            else:
+                # If both format and pattern are correct, reward is 1
+                return 1.0
+    except Exception:
+        # Any error leads to 0 reward
+        return 0.0
 
 
 def correctness_reward(answer: str, nums: List[int], target: int) -> float:

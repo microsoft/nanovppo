@@ -22,10 +22,11 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     --lr 4e-6 \
     -a grpo \
     --dataset cd \
-    --onlbsz 8 \
+    --onlbsz 64 \
+    --offbsz 4 \
     --maxtok 1024 \
     --maxstp 500 \
     --offepc 1 \
     -s 42 \
-    --kl_ctl 1e-6 \
+    --kl_ctl 0.001 \
     --evalevery 50

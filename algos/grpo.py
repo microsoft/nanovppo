@@ -110,7 +110,13 @@ class GRPO(Algo):
             )
 
         # compute rewards
-        rewards = list(self.reward_func(evaluation_requests))
+        rewards = self.reward_func(evaluation_requests)
+
+        if type(rewards) is tuple:
+            rewards = rewards[0]
+            for key, value in rewards[1].items():
+                self.stats.accumulate("avg_" + key, np.mean(value))
+
         RequestUtils.populate(evaluation_requests, rewards, "reward")
 
         max_reward, avg_reward = RequestUtils.gather_max_avg_reward(evaluation_requests)
@@ -152,6 +158,7 @@ class GRPO(Algo):
             is_final=finished,
         )
         advantages = torch.tensor(advantages, dtype=torch.float32)
+        self.stats.accumulate("avg_resp_length", response_mask.sum(1).mean().item())
 
         # probabilities under the reference policy
         ref_logprobs = get_logprobs(
@@ -219,7 +226,6 @@ class GRPO(Algo):
             )
 
             # Compute the PPO-clip loss
-            action_mask = mb_response_mask[:, 1:]
             log_ratio = (mb_logprobs - mb_old_logprobs)
             ratio = torch.exp(log_ratio)
 
@@ -227,15 +233,17 @@ class GRPO(Algo):
             pg_losses2 = -mb_advantage.unsqueeze(1) * torch.clamp(ratio, 0.9, 1.1)
             pg_losses = torch.max(pg_losses1, pg_losses2)
 
+            labels_mask = mb_response_mask[:, 1:]
             per_token_kl = (
                 torch.exp(mb_ref_logprobs - mb_logprobs)
                 - (mb_ref_logprobs - mb_logprobs)
                 - 1
             )
+
             per_token_loss = pg_losses + self.kl_ctl * per_token_kl
-            pg_loss = masked_mean(per_token_loss, action_mask, axis=1).mean()
+            pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
 
             self.stats.accumulate(
-                "kl_loss", masked_mean(per_token_kl, action_mask, axis=1).mean().item()
+                "kl_loss", masked_mean(per_token_kl, labels_mask, axis=1).mean().item()
             )
             return pg_loss
