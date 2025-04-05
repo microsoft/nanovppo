@@ -7,6 +7,8 @@ from typing import List, Tuple
 import os
 import sys
 
+import numpy as np
+
 from algos.algo import Request
 from ddp_utils import rank_zero_only
 from gen_utils import GeneratorClient
@@ -26,16 +28,23 @@ PROMPT_TEMPLATE = (
 
 
 def prepare_cd_dataset(subset="all", split="test", subsample=None, template='cot'):
-   data = load_dataset('Jiayi-Pan/Countdown-Tasks-3to4')[split]
+   data = load_dataset('Jiayi-Pan/Countdown-Tasks-3to4')['train']
+   if split == 'test':
+        data_indices = np.random.randint(0, len(data), 100)
+        data = data.select(data_indices)
+   else:
+        data_indices = np.random.randint(0, len(data), 10000)
+        data = data.select(data_indices)
+
    formatted_data = []
    for example in data:
        # Convert list of messages to a single string prompt.
        prompt_str = [
            {"role": "system", "content": SYSTEM_MESSAGE},
-           {"role": "user", "content": PROMPT_TEMPLATE.format(numbers=example["numbers"], target=example["target"])},
+           {"role": "user", "content": PROMPT_TEMPLATE.format(numbers=example["nums"], target=example["target"])},
        ]
        # need to compute reward with the numbers and target
-       formatted_data.append((prompt_str, (example['numbers'], example['target'])))
+       formatted_data.append((prompt_str, (example['nums'], example['target'])))
    return zip(*formatted_data)
 
 
