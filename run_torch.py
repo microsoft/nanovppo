@@ -57,6 +57,8 @@ import torch.multiprocessing as mp
 
 models = {
     "q1.5": "Qwen/Qwen2.5-1.5B",
+    "q3": "Qwen/Qwen2.5-3B",
+    "q3i": "Qwen/Qwen2.5-3B-Instruct",
     "q1.5m": "Qwen/Qwen2.5-Math-1.5B",
     "q1.5i": "Qwen/Qwen2.5-1.5B-Instruct",
     "phi": "microsoft/Phi-3-mini-4k-instruct",

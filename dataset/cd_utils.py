@@ -48,7 +48,7 @@ def prepare_cd_dataset(subset="all", split="test", subsample=None, template="cot
             },
         ]
         # need to compute reward with the numbers and target
-        formatted_data.append((prompt_str, (example["nums"], example["target"])))
+        formatted_data.append((prompt_str, (list(example["nums"]), example["target"])))
     return zip(*formatted_data)
 
 

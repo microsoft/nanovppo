@@ -15,7 +15,7 @@ export SGL_DP_SIZE=1
 sudo kill -kill `ps -ax | grep sgl | awk '{print $1}' | xargs`
 
 torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
-    -m q1.5i \
+    -m q3 \
     -o ${DIR}/${NAME}_42 \
     -t 1.0 \
     -k 4 \
