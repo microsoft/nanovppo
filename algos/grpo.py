@@ -158,7 +158,7 @@ class GRPO(Algo):
             is_final=finished,
         )
         advantages = torch.tensor(advantages, dtype=torch.float32)
-        self.stats.accumulate("avg_resp_length", response_mask.sum(1).mean().item())
+        self.stats.accumulate("avg_resp_length", response_mask.sum(1).float().mean().item())
 
         # probabilities under the reference policy
         ref_logprobs = get_logprobs(
