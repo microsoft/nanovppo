@@ -137,8 +137,9 @@ def train(local_rank, world_size, args):
     max_epochs = args.maxepochs
     max_off_epochs = args.offepc
     # total batch size across devices
-    onl_batch_size = args.onlbsz * ddp_state.num_processes
+    num_total_episodes = args.onlbsz * ddp_state.num_processes
     # this is *per device*
+    off_batch_size = args.offbsz
     inn_batch_size = args.innbsz
 
     if ddp_state.is_main_process:
@@ -168,7 +169,7 @@ def train(local_rank, world_size, args):
             "params": [
                 p for n, p in algo.model.named_parameters() if n in decay_parameters
             ],
-            "weight_decay": 1e-6,
+            "weight_decay": args.wd,
         },
         {
             "params": [
@@ -192,7 +193,7 @@ def train(local_rank, world_size, args):
         )
     ddp_state.print(torch.cuda.mem_get_info())
 
-    total_steps = (max_epochs * max_off_epochs)
+    total_steps = max_epochs * max_off_epochs
 
     ddp_state.print("Num episodes per epoch (per GPU):", args.onlbsz)
     ddp_state.print("Max epochs:", max_epochs)
@@ -250,10 +251,6 @@ def train(local_rank, world_size, args):
 
     training_stats = []
 
-    assert (
-        onl_batch_size >= args.subs
-    ), "Batch size cannot be smaller than the dataset size!"
-
     global_step = 0
     eval_step = False
     best_acc = 0
@@ -264,7 +261,7 @@ def train(local_rank, world_size, args):
         epoch_stats = AccumulatorDict()
 
         sample_indices = np.random.choice(
-            len(all_queries), onl_batch_size, replace=False
+            len(all_queries), num_total_episodes, replace=False
         )
         queries_batch = [all_queries[i] for i in sample_indices]
         labels_batch = [all_labels[i] for i in sample_indices]
@@ -321,6 +318,7 @@ def train(local_rank, world_size, args):
             optimizer.zero_grad()
             train_iterator = iter(dataloader)
             off_sampler.set_epoch(off_epoch)
+            acc_steps = off_batch_size if off_batch_size > 0 else len(dataloader)
 
             for micro_step, batch in enumerate(
                 tqdm(
@@ -337,21 +335,24 @@ def train(local_rank, world_size, args):
                     micro_step == len(dataloader) - 1
                 )
                 loss = algo.compute_loss(batch)
+                (loss / acc_steps).backward()
 
-                (loss / len(dataloader)).backward()
                 epoch_stats.accumulate("loss", loss.item())
                 del batch
                 del loss
                 torch.cuda.empty_cache()
 
-            # update the model
-            torch.nn.utils.clip_grad_norm_(algo.model.parameters(), 1.0)
-            optimizer.step()
-            torch.cuda.synchronize()
-            scheduler.step()
-            optimizer.zero_grad()
-            torch.cuda.empty_cache()
-            global_step += 1
+                if (
+                    args.offbsz > 0 and (micro_step + 1) % args.offbsz == 0
+                ) or micro_step == len(dataloader) - 1:
+                    # update the model parameters, off policy-ness!
+                    torch.nn.utils.clip_grad_norm_(algo.model.parameters(), 1.0)
+                    optimizer.step()
+                    torch.cuda.synchronize()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    torch.cuda.empty_cache()
+                    global_step += 1
 
             if args.ema:
                 param_ema(ema_params, algo.model.module, args.ema)
@@ -453,7 +454,9 @@ if __name__ == "__main__":
     parser.add_argument("-a", type=str, help="Algorithm")
     parser.add_argument("--lr", type=float, help="Learning rate", default=1e-5)
     parser.add_argument("--template", default="cot", help="Template type COT/LCOT")
-    parser.add_argument("--maxepochs", type=int, help="Max number of epochs", default=-1)
+    parser.add_argument(
+        "--maxepochs", type=int, help="Max number of epochs", default=-1
+    )
     parser.add_argument(
         "--onlbsz", type=int, help="Online batch size (per gpu)", default=32
     )
@@ -461,7 +464,19 @@ if __name__ == "__main__":
         "--offepc", type=int, help="Number of offline epochs", default=1
     )
     parser.add_argument(
-        "--innbsz", type=int, help="Inner batch size (per gpu)", default=1
+        "--offbsz", type=int, help="Offline batch size (per gpu)", default=-1
+    )
+    parser.add_argument(
+        "--wd",
+        type=float,
+        help="Weight decay",
+        default=0.,
+    )
+    parser.add_argument(
+        "--innbsz",
+        type=int,
+        help="Inner batch size (sets acc steps, per gpu)",
+        default=1,
     )
     parser.add_argument(
         "--opt",
