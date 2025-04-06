@@ -16,6 +16,7 @@ from datasets import load_dataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from accelerate import Accelerator
+from algos.tpo import TPO
 from algos.vppo import VPPO
 from dataset.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
 from dataset.cd_utils import compute_cd_reward, eval_cd, prepare_cd_dataset
@@ -70,6 +71,7 @@ algos = {
     "rft": RFT,
     "grpo": GRPO,
     "vppo": VPPO,
+    "tpo": TPO
 }
 
 
@@ -256,6 +258,7 @@ def train(local_rank, world_size, args):
     best_acc = 0
     tracc_math = 0
     acc_math = 0
+    start_time = time.time()
 
     for global_epoch in range(max_epochs):
         epoch_stats = AccumulatorDict()
@@ -390,6 +393,7 @@ def train(local_rank, world_size, args):
                 "epoch": global_epoch,
                 "step": global_step,
                 "lr": scheduler.get_last_lr()[0],
+                "time": time.time() - start_time,
                 **epoch_stats.get(),
                 **algo.stats.get(),
             }
