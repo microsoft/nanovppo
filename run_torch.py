@@ -377,7 +377,6 @@ def train(local_rank, world_size, args):
         gc.collect()
         torch.cuda.empty_cache()
         ddp_state.wait_for_everyone()
-        global_iter += 1
 
         eval_step = (global_epoch + 1) % args.evalevery == 0
 
