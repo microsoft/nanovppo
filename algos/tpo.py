@@ -21,7 +21,11 @@ from utils import (
     compute_kl_divergence,
 )
 
-from dataset.data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
+from dataset.data_utils import (
+    create_joint_tensors,
+    get_ending_tokens,
+    pad_query_and_response,
+)
 from gen_utils import GeneratorClient
 from algos.algo import Algo, Request, RequestUtils
 from algos.rft import RFT
@@ -37,11 +41,15 @@ class TPO(Algo):
             "--kl_ctl", type=float, default=0.0001, help="KL term control"
         )
         parser.add_argument(
-            "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
+            "--tea_ctl",
+            type=float,
+            default=0.1,
+            help="Teacher distillation term control",
         )
         parser.add_argument(
-            "--drgrpo", type=int, default=0, help="If 1, use DrGRPO"
+            "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
         )
+        parser.add_argument("--drgrpo", type=int, default=0, help="If 1, use DrGRPO")
         return parser
 
     def __init__(
@@ -58,13 +66,13 @@ class TPO(Algo):
             model_name,
             torch_dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
-            device_map=device
+            device_map=device,
         )
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
-            device_map=device
+            device_map=device,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
@@ -73,6 +81,7 @@ class TPO(Algo):
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.k = k
+        self.tea_ctl = algo_kwargs["tea_ctl"]
         self.kl_ctl = algo_kwargs["kl_ctl"]
         self.kl_max = algo_kwargs["kl_max"]
         self.drgpo = algo_kwargs["drgrpo"]
@@ -147,11 +156,9 @@ class TPO(Algo):
         ddp_state.print("====================================")
 
         rewards = np.asarray(rewards).reshape(-1, self.k)
-        advantages = (rewards - rewards.mean(axis=1, keepdims=True))
+        advantages = rewards - rewards.mean(axis=1, keepdims=True)
         if not self.drgpo:
-            advantages = advantages / (
-                rewards.std(axis=1, keepdims=True) + 1e-8
-            )
+            advantages = advantages / (rewards.std(axis=1, keepdims=True) + 1e-8)
         advantages = advantages.reshape(-1).tolist()
 
         query_response, query_response_mask, response_mask = create_joint_tensors(
@@ -161,7 +168,9 @@ class TPO(Algo):
             is_final=finished,
         )
         advantages = torch.tensor(advantages, dtype=torch.float32)
-        self.stats.accumulate("avg_resp_length", response_mask.sum(1).float().mean().item())
+        self.stats.accumulate(
+            "avg_resp_length", response_mask.sum(1).float().mean().item()
+        )
 
         # best response
         best_response = responses[np.argmax(rewards)]
@@ -174,13 +183,15 @@ class TPO(Algo):
             teacher_message[-1]["content"] = TEACHER_TEMPLATE.format(
                 best_prompt=best_prompt,
                 best_response=best_response,
-                current_prompt=teacher_message[-1]["content"]
+                current_prompt=teacher_message[-1]["content"],
             )
-        tea_query_response, tea_query_response_mask, tea_response_mask = create_joint_tensors(
-            self.tokenizer,
-            teacher_messages,
-            responses,
-            is_final=finished,
+        tea_query_response, tea_query_response_mask, tea_response_mask = (
+            create_joint_tensors(
+                self.tokenizer,
+                teacher_messages,
+                responses,
+                is_final=finished,
+            )
         )
         tea_logprobs = get_logprobs(
             self.model,
@@ -190,7 +201,7 @@ class TPO(Algo):
             temperature=self.temperature,
             reduction="none",
         )
- 
+
         # probabilities under the reference policy
         ref_logprobs = get_logprobs(
             self.ref_model,
@@ -261,7 +272,7 @@ class TPO(Algo):
             )
 
             # Compute the PPO-clip loss
-            log_ratio = (mb_logprobs - mb_old_logprobs)
+            log_ratio = mb_logprobs - mb_old_logprobs
             ratio = torch.exp(log_ratio)
 
             pg_losses1 = -mb_advantage.unsqueeze(1) * ratio
@@ -279,17 +290,19 @@ class TPO(Algo):
             tea_logp = mb_tea_logprobs[mb_tea_response_mask[:, 1:] == 1]
             stu_logp = mb_logprobs[labels_mask == 1]
             per_token_tea_kl = (
-                torch.exp(tea_logp - stu_logp)
-                - (tea_logp - stu_logp)
-                - 1
+                torch.exp(tea_logp - stu_logp) - (tea_logp - stu_logp) - 1
             )
 
             per_token_loss = pg_losses + self.kl_ctl * per_token_kl
             per_token_tea_kl = per_token_tea_kl.mean()
-            pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean() + 0.1 * per_token_tea_kl
+            pg_loss = (
+                masked_mean(per_token_loss, labels_mask, axis=1).mean()
+                + self.tea_ctl * per_token_tea_kl
+            )
 
             self.stats.accumulate(
-                "entropy", -((mb_logprobs * labels_mask).sum() / labels_mask.sum()).item()
+                "entropy",
+                -((mb_logprobs * labels_mask).sum() / labels_mask.sum()).item(),
             )
             self.stats.accumulate(
                 "kl_loss", masked_mean(per_token_kl, labels_mask, axis=1).mean().item()
