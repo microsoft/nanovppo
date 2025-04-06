@@ -134,15 +134,13 @@ def train(local_rank, world_size, args):
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         args.o = f"runs_output/{args.a}_{args.m}_{args.s}_{timestamp}"
 
-    max_epochs = args.epc
-    max_steps = args.maxstp
+    max_epochs = args.maxepochs
     max_off_epochs = args.offepc
     # total batch size across devices
     onl_batch_size = args.onlbsz * ddp_state.num_processes
     # this is *per device*
     off_batch_size = args.offbsz
-    inn_batch_size = args.innbsz
-    acc_steps = off_batch_size // inn_batch_size
+    inn_batch_size = args.onlbsz // args.offbsz
 
     assert (
         onl_batch_size % ddp_state.num_processes == 0
@@ -199,17 +197,14 @@ def train(local_rank, world_size, args):
         )
     ddp_state.print(torch.cuda.mem_get_info())
 
-    if args.a in ["rloo", "grpo", "vppo"]:
-        num_ex = onl_batch_size * args.k
-    else:
-        num_ex = onl_batch_size
+    total_steps = (max_epochs * max_off_epochs)
 
-    if max_steps > 0:
-        total_steps = max_steps
-    else:
-        total_steps = (max_epochs * max_off_epochs * num_ex) // (
-            acc_steps * ddp_state.num_processes
-        )
+    ddp_state.print("Batch size (total across GPUs):", onl_batch_size)
+    ddp_state.print("Batch size (per GPU):", args.onlbsz)
+    ddp_state.print("Gradient accumulation steps:", args.offbsz)
+    ddp_state.print("Max epochs:", max_epochs)
+    ddp_state.print("Max offline epochs:", max_off_epochs)
+    ddp_state.print("Total steps:", total_steps)
 
     if args.sch == "cosine_with_warmup":
         scheduler = CosineWarmupScheduler(
@@ -272,8 +267,7 @@ def train(local_rank, world_size, args):
     tracc_math = 0
     acc_math = 0
 
-    while global_step < total_steps:
-        epoch = global_step // (max_off_epochs * len(all_queries))
+    for global_epoch in range(max_epochs):
         epoch_stats = AccumulatorDict()
 
         sample_indices = np.random.choice(
@@ -297,7 +291,7 @@ def train(local_rank, world_size, args):
 
             training_stats.append(
                 {
-                    "epoch": epoch,
+                    "epoch": global_epoch,
                     "step": global_step,
                     "train_accuracy": tracc_math,
                     "test_accuracy": acc_math,
@@ -320,11 +314,12 @@ def train(local_rank, world_size, args):
 
         torch.save(
             episode_data,
-            f"{args.o}/episode_data_{ddp_state.local_process_index}_{epoch}.pt",
+            f"{args.o}/episode_data_{ddp_state.local_process_index}_{global_epoch}.pt",
         )
 
         # offline steps
         train_iterator = iter(dataloader)
+        acc_steps = len(dataloader)
         off_sampler = dataloader.sampler
         off_steps = max_off_epochs * len(dataloader)
         off_epoch = 0
@@ -333,6 +328,7 @@ def train(local_rank, world_size, args):
             algo.model.train()
             optimizer.zero_grad()
             train_iterator = iter(dataloader)
+            off_sampler.set_epoch(off_epoch)
 
             for micro_step, batch in enumerate(
                 tqdm(
@@ -346,7 +342,7 @@ def train(local_rank, world_size, args):
                 batch = [b.to(ddp_state.device) for b in batch]
 
                 algo.model.require_backward_grad_sync = (
-                    micro_step + 1 == acc_steps or micro_step == len(dataloader) - 1
+                    micro_step == len(dataloader) - 1
                 )
                 loss = algo.compute_loss(batch)
 
@@ -356,33 +352,20 @@ def train(local_rank, world_size, args):
                 del loss
                 torch.cuda.empty_cache()
 
-                if (micro_step + 1) % acc_steps == 0 or micro_step == len(
-                    dataloader
-                ) - 1:
-                    # update the model
-                    torch.nn.utils.clip_grad_norm_(algo.model.parameters(), 1.0)
-                    optimizer.step()
-                    torch.cuda.synchronize()
-                    scheduler.step()
-                    optimizer.zero_grad()
-                    torch.cuda.empty_cache()
-                    global_step += 1
-                    eval_step = eval_step or (
-                        (
-                            args.evaleverymode == "step"
-                            and (global_step + 1) % args.evalevery == 0
-                        )
-                        or (
-                            args.evaleverymode == "epoch"
-                            and (off_epoch + 1) % args.evalevery == 0
-                        )
-                    )
+            # update the model
+            torch.nn.utils.clip_grad_norm_(algo.model.parameters(), 1.0)
+            optimizer.step()
+            torch.cuda.synchronize()
+            scheduler.step()
+            optimizer.zero_grad()
+            torch.cuda.empty_cache()
+            global_step += 1
 
-                    if args.ema:
-                        param_ema(ema_params, algo.model.module, args.ema)
+            if args.ema:
+                param_ema(ema_params, algo.model.module, args.ema)
 
             ddp_state.print(
-                f"Epoch: {epoch}, Off Epoch: {off_epoch}, "
+                f"Iter: {iter}, Off Epoch: {off_epoch}, "
                 f"Step: {global_step}, {algo.__class__.__name__}, "
                 f"Loss: {epoch_stats.mean('loss'):.4f}, "
                 f"Lr: {scheduler.get_last_lr()[0]:.6f}"
@@ -394,6 +377,9 @@ def train(local_rank, world_size, args):
         gc.collect()
         torch.cuda.empty_cache()
         ddp_state.wait_for_everyone()
+        global_iter += 1
+
+        eval_step = (global_epoch + 1) % args.evalevery == 0
 
         if eval_step:
             acc_math = np.mean(
@@ -409,7 +395,7 @@ def train(local_rank, world_size, args):
         # append a bunch of training stats
         training_stats.append(
             {
-                "epoch": epoch,
+                "epoch": global_epoch,
                 "step": global_step,
                 "lr": scheduler.get_last_lr()[0],
                 **epoch_stats.get(),
@@ -475,22 +461,16 @@ if __name__ == "__main__":
     parser.add_argument("-s", type=int, help="Seed", default=42)
     parser.add_argument("-a", type=str, help="Algorithm")
     parser.add_argument("--lr", type=float, help="Learning rate", default=1e-5)
-    parser.add_argument("--template", default="cot", help="Template type COT/LCOT/QST")
-    parser.add_argument("--epc", type=int, help="Number of epochs", default=10)
+    parser.add_argument("--template", default="cot", help="Template type COT/LCOT")
+    parser.add_argument("--maxepochs", type=int, help="Max number of epochs", default=-1)
     parser.add_argument(
         "--onlbsz", type=int, help="Online batch size (per gpu)", default=32
     )
     parser.add_argument(
-        "--offepc", type=int, help="Number of offline epochs", default=4
+        "--offepc", type=int, help="Number of offline epochs", default=1
     )
     parser.add_argument(
-        "--offbsz", type=int, help="Offline batch size (per gpu)", default=8
-    )
-    parser.add_argument(
-        "--innbsz",
-        type=int,
-        help="Inner/Grad accumulation batch size (per gpu)",
-        default=1,
+        "--offbsz", type=int, help="Batch size (per gpu, gradient accumulation)", default=1
     )
     parser.add_argument(
         "--opt",
@@ -505,13 +485,7 @@ if __name__ == "__main__":
         help="Apply ema to the model parameters",
         default=0.0,
     )
-    parser.add_argument("--evalevery", type=int, help="Eval every N mode", default=-1)
-    parser.add_argument(
-        "--evaleverymode", help="Eval every mode", type=str, default="epoch"
-    )
-    parser.add_argument(
-        "--maxstp", type=int, help="Max number of steps, overrides --epc", default=-1
-    )
+    parser.add_argument("--evalevery", type=int, help="Eval every N epochs", default=-1)
     parser.add_argument("-k", type=int, help="Number of samples", default=5)
     parser.add_argument("-t", type=float, help="Temperature", default=DEFAULT_TEMP)
     parser.add_argument(

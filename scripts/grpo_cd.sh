@@ -19,15 +19,14 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     -o ${DIR}/${NAME}_42 \
     -t 1.0 \
     -k 4 \
-    --lr 4e-6 \
+    --lr 1e-6 \
     -a grpo \
     --dataset cd \
-    --onlbsz 64 \
+    --onlbsz 16 \
     --offbsz 4 \
     --maxtok 1024 \
-    --epc 100 \
+    --maxepochs 100 \
     --offepc 1 \
     -s 42 \
     --kl_ctl 0.001 \
-    --evalevery 10 \
-    --evaleverymode epoch
+    --evalevery 5
