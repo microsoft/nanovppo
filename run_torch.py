@@ -139,12 +139,7 @@ def train(local_rank, world_size, args):
     # total batch size across devices
     onl_batch_size = args.onlbsz * ddp_state.num_processes
     # this is *per device*
-    off_batch_size = args.offbsz
-    inn_batch_size = args.onlbsz // args.offbsz
-
-    assert (
-        onl_batch_size % ddp_state.num_processes == 0
-    ), "Batch size must be divisible by the number of GPUs!"
+    inn_batch_size = args.innbsz
 
     if ddp_state.is_main_process:
         setup_output_directory(args.o)
@@ -199,9 +194,8 @@ def train(local_rank, world_size, args):
 
     total_steps = (max_epochs * max_off_epochs)
 
-    ddp_state.print("Batch size (total across GPUs):", onl_batch_size)
-    ddp_state.print("Batch size (per GPU):", args.onlbsz)
-    ddp_state.print("Gradient accumulation steps:", args.offbsz)
+    ddp_state.print("Num episodes per epoch (per GPU):", args.onlbsz)
+    ddp_state.print("Gradient acc steps:", acc_steps)
     ddp_state.print("Max epochs:", max_epochs)
     ddp_state.print("Max offline epochs:", max_off_epochs)
     ddp_state.print("Total steps:", total_steps)
@@ -319,7 +313,6 @@ def train(local_rank, world_size, args):
 
         # offline steps
         train_iterator = iter(dataloader)
-        acc_steps = len(dataloader)
         off_sampler = dataloader.sampler
         off_steps = max_off_epochs * len(dataloader)
         off_epoch = 0
@@ -346,7 +339,7 @@ def train(local_rank, world_size, args):
                 )
                 loss = algo.compute_loss(batch)
 
-                (loss / acc_steps).backward()
+                (loss / len(dataloader)).backward()
                 epoch_stats.accumulate("loss", loss.item())
                 del batch
                 del loss
@@ -469,7 +462,7 @@ if __name__ == "__main__":
         "--offepc", type=int, help="Number of offline epochs", default=1
     )
     parser.add_argument(
-        "--offbsz", type=int, help="Batch size (per gpu, gradient accumulation)", default=1
+        "--innbsz", type=int, help="Inner batch size (per gpu)", default=1
     )
     parser.add_argument(
         "--opt",

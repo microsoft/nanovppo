@@ -46,6 +46,10 @@ def prepare_cd_dataset(subset="all", split="test", subsample=None, template="cot
                     numbers=example["nums"], target=example["target"]
                 ),
             },
+            {
+                "role": "assistant",
+                "content": "Let me solve this step by step.\n<think>",
+            }
         ]
         # need to compute reward with the numbers and target
         formatted_data.append((prompt_str, (list(example["nums"]), example["target"])))
@@ -80,7 +84,7 @@ def extract_answer_from_model_output(text):
     if "</answer>" not in last_part:
         return None
     answer = last_part.split("</answer>")[0].strip()
-    return None if answer == "..." else answer
+    return answer
 
 
 @rank_zero_only
@@ -147,6 +151,7 @@ def format_reward(completion: str) -> float:
         # 1) <think>...contents not including other <think> tags...</think>
         # 2) \n
         # 3) <answer>...anything...</answer>
+        completion = "<think> " + completion
         regex = r"^<think>([^<]*(?:<(?!/?think>)[^<]*)*)<\/think>\n<answer>([\s\S]*?)<\/answer>$"
         match = re.search(regex, completion, re.DOTALL)
 
