@@ -5,7 +5,7 @@ export TRAIN_PROCS=1
 export SGL_BASE_GPU_ID=$TRAIN_PROCS
 export SGL_DP_SIZE=1
 
-python run_spawn.py -P $TRAIN_PROCS \
+torchrun --nproc_per_node=$TRAIN_PROCS run_torch.py \
     -m q1.5i \
     -o ${DIR}/${NAME}_42 \
     -t 1.0 --fast \
