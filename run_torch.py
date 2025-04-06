@@ -57,6 +57,8 @@ import torch.multiprocessing as mp
 
 models = {
     "q1.5": "Qwen/Qwen2.5-1.5B",
+    "q3": "Qwen/Qwen2.5-3B",
+    "q3i": "Qwen/Qwen2.5-3B-Instruct",
     "q1.5m": "Qwen/Qwen2.5-Math-1.5B",
     "q1.5i": "Qwen/Qwen2.5-1.5B-Instruct",
     "phi": "microsoft/Phi-3-mini-4k-instruct",
@@ -101,24 +103,24 @@ def train(local_rank, world_size, args):
     random.seed(args.s)
 
     # dataset setup + rewards
-    if args.dataset == 'math':
+    if args.dataset == "math":
         prepare_dataset = prepare_math_dataset
         eval_dataset = eval_math
-        if args.template == 'lcot':
+        if args.template == "lcot":
             reward_func = compute_lcot_math_reward
-        elif args.template == 'cot':
+        elif args.template == "cot":
             reward_func = compute_math_reward
         else:
             reward_func = compute_qst_math_reward
-    elif args.dataset == 'gsm8k':
+    elif args.dataset == "gsm8k":
         prepare_dataset = prepare_gsm8k_dataset
         eval_dataset = eval_gsm8k
         reward_func = compute_gsm8k_reward
-    elif args.dataset == 'arc':
+    elif args.dataset == "arc":
         prepare_dataset = prepare_arc_dataset
         eval_dataset = eval_arc
         reward_func = compute_arc_reward
-    elif args.dataset == 'cd':
+    elif args.dataset == "cd":
         prepare_dataset = prepare_cd_dataset
         eval_dataset = eval_cd
         reward_func = compute_cd_reward
@@ -132,19 +134,13 @@ def train(local_rank, world_size, args):
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         args.o = f"runs_output/{args.a}_{args.m}_{args.s}_{timestamp}"
 
-    max_epochs = args.epc
-    max_steps = args.maxstp
+    max_epochs = args.maxepochs
     max_off_epochs = args.offepc
     # total batch size across devices
-    onl_batch_size = args.onlbsz * ddp_state.num_processes
+    num_total_episodes = args.onlbsz * ddp_state.num_processes
     # this is *per device*
     off_batch_size = args.offbsz
     inn_batch_size = args.innbsz
-    acc_steps = off_batch_size // inn_batch_size
-
-    assert (
-        onl_batch_size % ddp_state.num_processes == 0
-    ), "Batch size must be divisible by the number of GPUs!"
 
     if ddp_state.is_main_process:
         setup_output_directory(args.o)
@@ -173,7 +169,7 @@ def train(local_rank, world_size, args):
             "params": [
                 p for n, p in algo.model.named_parameters() if n in decay_parameters
             ],
-            "weight_decay": 1e-6,
+            "weight_decay": args.wd,
         },
         {
             "params": [
@@ -197,19 +193,14 @@ def train(local_rank, world_size, args):
         )
     ddp_state.print(torch.cuda.mem_get_info())
 
-    if args.a in ["rloo", "grpo", "vppo"]:
-        num_ex = onl_batch_size * args.k
-    else:
-        num_ex = onl_batch_size
+    total_steps = max_epochs * max_off_epochs
 
-    if max_steps > 0:
-        total_steps = max_steps
-    else:
-        total_steps = (max_epochs * max_off_epochs * num_ex) // (
-            acc_steps * ddp_state.num_processes
-        )
+    ddp_state.print("Num episodes per epoch (per GPU):", args.onlbsz)
+    ddp_state.print("Max epochs:", max_epochs)
+    ddp_state.print("Max offline epochs:", max_off_epochs)
+    ddp_state.print("Total steps:", total_steps)
 
-    if args.sch == 'cosine_with_warmup':
+    if args.sch == "cosine_with_warmup":
         scheduler = CosineWarmupScheduler(
             optimizer,
             max_lr=args.lr,
@@ -217,7 +208,7 @@ def train(local_rank, world_size, args):
             warmup_steps=0.03 * total_steps,
             max_steps=total_steps,
         )
-    elif args.sch == 'constant_with_warmup':
+    elif args.sch == "constant_with_warmup":
         scheduler = CosineWarmupScheduler(
             optimizer,
             max_lr=args.lr,
@@ -226,9 +217,9 @@ def train(local_rank, world_size, args):
             max_steps=total_steps,
         )
     else:
-        raise ValueError('Unknown scheduler.')
+        raise ValueError("Unknown scheduler.")
 
-    if args.ema > 0.:
+    if args.ema > 0.0:
         ema_params = copy_model_param(algo.model.module)
 
     ddp_state.print("Scheduler set! Total steps:", total_steps)
@@ -238,11 +229,13 @@ def train(local_rank, world_size, args):
             args.ss, split="train", subsample=args.subs, template=args.template
         )
         if args.t500:
-            if args.dataset != 'math':
+            if args.dataset != "math":
                 raise ValueError("t500 only available with MATH dataset!")
 
             test_queries, test_labels = prepare_dataset(
-                args.ss, split="500", template=args.template,
+                args.ss,
+                split="500",
+                template=args.template,
             )
         else:
             test_queries, test_labels = prepare_dataset(
@@ -258,22 +251,17 @@ def train(local_rank, world_size, args):
 
     training_stats = []
 
-    assert (
-        onl_batch_size >= args.subs
-    ), "Batch size cannot be smaller than the dataset size!"
-
     global_step = 0
     eval_step = False
     best_acc = 0
     tracc_math = 0
     acc_math = 0
 
-    while global_step < total_steps:
-        epoch = global_step // (max_off_epochs * len(all_queries))
+    for global_epoch in range(max_epochs):
         epoch_stats = AccumulatorDict()
 
         sample_indices = np.random.choice(
-            len(all_queries), onl_batch_size, replace=False
+            len(all_queries), num_total_episodes, replace=False
         )
         queries_batch = [all_queries[i] for i in sample_indices]
         labels_batch = [all_labels[i] for i in sample_indices]
@@ -293,7 +281,7 @@ def train(local_rank, world_size, args):
 
             training_stats.append(
                 {
-                    "epoch": epoch,
+                    "epoch": global_epoch,
                     "step": global_step,
                     "train_accuracy": tracc_math,
                     "test_accuracy": acc_math,
@@ -316,7 +304,7 @@ def train(local_rank, world_size, args):
 
         torch.save(
             episode_data,
-            f"{args.o}/episode_data_{ddp_state.local_process_index}_{epoch}.pt",
+            f"{args.o}/episode_data_{ddp_state.local_process_index}_{global_epoch}.pt",
         )
 
         # offline steps
@@ -329,6 +317,8 @@ def train(local_rank, world_size, args):
             algo.model.train()
             optimizer.zero_grad()
             train_iterator = iter(dataloader)
+            off_sampler.set_epoch(off_epoch)
+            acc_steps = off_batch_size if off_batch_size > 0 else len(dataloader)
 
             for micro_step, batch in enumerate(
                 tqdm(
@@ -342,20 +332,20 @@ def train(local_rank, world_size, args):
                 batch = [b.to(ddp_state.device) for b in batch]
 
                 algo.model.require_backward_grad_sync = (
-                    micro_step + 1 == acc_steps or micro_step == len(dataloader) - 1
+                    micro_step == len(dataloader) - 1
                 )
                 loss = algo.compute_loss(batch)
-
                 (loss / acc_steps).backward()
+
                 epoch_stats.accumulate("loss", loss.item())
                 del batch
                 del loss
                 torch.cuda.empty_cache()
 
-                if (micro_step + 1) % acc_steps == 0 or micro_step == len(
-                    dataloader
-                ) - 1:
-                    # update the model
+                if (
+                    args.offbsz > 0 and (micro_step + 1) % args.offbsz == 0
+                ) or micro_step == len(dataloader) - 1:
+                    # update the model parameters, off policy-ness!
                     torch.nn.utils.clip_grad_norm_(algo.model.parameters(), 1.0)
                     optimizer.step()
                     torch.cuda.synchronize()
@@ -363,14 +353,12 @@ def train(local_rank, world_size, args):
                     optimizer.zero_grad()
                     torch.cuda.empty_cache()
                     global_step += 1
-                    eval_step = eval_step or ((global_step + 1) % args.evalevery == 0 or args.evalevery == -1)
 
-                    if args.ema:
-                        param_ema(ema_params, algo.model.module, args.ema)
-
+            if args.ema:
+                param_ema(ema_params, algo.model.module, args.ema)
 
             ddp_state.print(
-                f"Epoch: {epoch}, Off Epoch: {off_epoch}, "
+                f"Epoch: {global_epoch}, Off Epoch: {off_epoch}, "
                 f"Step: {global_step}, {algo.__class__.__name__}, "
                 f"Loss: {epoch_stats.mean('loss'):.4f}, "
                 f"Lr: {scheduler.get_last_lr()[0]:.6f}"
@@ -382,6 +370,8 @@ def train(local_rank, world_size, args):
         gc.collect()
         torch.cuda.empty_cache()
         ddp_state.wait_for_everyone()
+
+        eval_step = (global_epoch + 1) % args.evalevery == 0
 
         if eval_step:
             acc_math = np.mean(
@@ -397,7 +387,7 @@ def train(local_rank, world_size, args):
         # append a bunch of training stats
         training_stats.append(
             {
-                "epoch": epoch,
+                "epoch": global_epoch,
                 "step": global_step,
                 "lr": scheduler.get_last_lr()[0],
                 **epoch_stats.get(),
@@ -463,21 +453,29 @@ if __name__ == "__main__":
     parser.add_argument("-s", type=int, help="Seed", default=42)
     parser.add_argument("-a", type=str, help="Algorithm")
     parser.add_argument("--lr", type=float, help="Learning rate", default=1e-5)
-    parser.add_argument("--template", default='cot', help="Template type COT/LCOT/QST")
-    parser.add_argument("--epc", type=int, help="Number of epochs", default=10)
+    parser.add_argument("--template", default="cot", help="Template type COT/LCOT")
+    parser.add_argument(
+        "--maxepochs", type=int, help="Max number of epochs", default=-1
+    )
     parser.add_argument(
         "--onlbsz", type=int, help="Online batch size (per gpu)", default=32
     )
     parser.add_argument(
-        "--offepc", type=int, help="Number of offline epochs", default=4
+        "--offepc", type=int, help="Number of offline epochs", default=1
     )
     parser.add_argument(
-        "--offbsz", type=int, help="Offline batch size (per gpu)", default=8
+        "--offbsz", type=int, help="Offline batch size (per gpu)", default=-1
+    )
+    parser.add_argument(
+        "--wd",
+        type=float,
+        help="Weight decay",
+        default=0.,
     )
     parser.add_argument(
         "--innbsz",
         type=int,
-        help="Inner/Grad accumulation batch size (per gpu)",
+        help="Inner batch size (sets acc steps, per gpu)",
         default=1,
     )
     parser.add_argument(
@@ -491,20 +489,17 @@ if __name__ == "__main__":
         "--ema",
         type=float,
         help="Apply ema to the model parameters",
-        default=0.,
+        default=0.0,
     )
-    parser.add_argument(
-        "--evalevery", type=int, help="Eval every N steps", default=1
-    )
-    parser.add_argument(
-        "--maxstp", type=int, help="Max number of steps, overrides --epc", default=-1
-    )
+    parser.add_argument("--evalevery", type=int, help="Eval every N epochs", default=-1)
     parser.add_argument("-k", type=int, help="Number of samples", default=5)
     parser.add_argument("-t", type=float, help="Temperature", default=DEFAULT_TEMP)
     parser.add_argument(
         "--maxtok", type=int, help="Number of tokens", default=DEFAULT_MAX_TOKENS
     )
-    parser.add_argument("--sch", type=str, help="Scheduler", default="constant_with_warmup")
+    parser.add_argument(
+        "--sch", type=str, help="Scheduler", default="constant_with_warmup"
+    )
     parser.add_argument("--dataset", type=str, help="Dataset", default="math")
     parser.add_argument("-b", type=str, help="Backend", default="sgl")
     parser.add_argument("--tpsz", type=int, help="Tensor parallel size", default=1)
@@ -513,7 +508,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fast", action="store_true", help="Use fast mode (no eval on epoch 0)"
     )
-    
+
     parser.add_argument(
         "--t500", action="store_true", help="Use 500 examples for MATH test."
     )

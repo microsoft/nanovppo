@@ -1,5 +1,4 @@
 sglang[all]
 torch==2.5.1
-transformers==4.47.0
+transformers==4.48.2
 numpy
-docker
