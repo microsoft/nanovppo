@@ -195,7 +195,6 @@ def train(local_rank, world_size, args):
     total_steps = (max_epochs * max_off_epochs)
 
     ddp_state.print("Num episodes per epoch (per GPU):", args.onlbsz)
-    ddp_state.print("Gradient acc steps:", acc_steps)
     ddp_state.print("Max epochs:", max_epochs)
     ddp_state.print("Max offline epochs:", max_off_epochs)
     ddp_state.print("Total steps:", total_steps)
@@ -358,7 +357,7 @@ def train(local_rank, world_size, args):
                 param_ema(ema_params, algo.model.module, args.ema)
 
             ddp_state.print(
-                f"Iter: {iter}, Off Epoch: {off_epoch}, "
+                f"Epoch: {global_epoch}, Off Epoch: {off_epoch}, "
                 f"Step: {global_step}, {algo.__class__.__name__}, "
                 f"Loss: {epoch_stats.mean('loss'):.4f}, "
                 f"Lr: {scheduler.get_last_lr()[0]:.6f}"
