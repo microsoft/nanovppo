@@ -39,7 +39,7 @@ class VLLMGeneratorClient:
 
     @ddp_state.on_main_process
     def start(self):
-        self.llm_engine = LLM(
+        self.llm = LLM(
             model=self.model_name,
             skip_tokenizer_init=False,
             gpu_memory_utilization=0.2,
@@ -63,7 +63,7 @@ class VLLMGeneratorClient:
             if hasattr(model, "module")
             else model.state_dict()
         )
-        self.llm_engine.llm_engine.driver_worker.model_runner.model.load_weights(
+        self.llm.llm_engine.model_executor.driver_worker.model_runner.model.load_weights(
             state_dict.items()
         )
 
@@ -91,7 +91,7 @@ class VLLMGeneratorClient:
         ddp_state.print("VLLM prompt:")
         ddp_state.print(prompts[0])
 
-        outputs = self.llm_engine.generate(
+        outputs = self.llm.generate(
             prompts=prompts,
             sampling_params=SamplingParams(
                 n=n,
