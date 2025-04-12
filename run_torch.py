@@ -16,6 +16,7 @@ from datasets import load_dataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from accelerate import Accelerator
+
 from algos.vppo import VPPO
 from dataset.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
 from dataset.cd_utils import compute_cd_reward, eval_cd, prepare_cd_dataset
@@ -89,11 +90,12 @@ def train(local_rank, world_size, args):
 
     if local_rank == 0:
         print("=============================")
-        print("Bringing up SGL server")
-        generator = SGLGenerator(models[args.m], args.s)
+        print(f"Bringing up {args.b} server")
+        generator = GeneratorClient.init(
+            backend=args.b, model_name=models[args.m], seed=args.s
+        )
 
-    # wait for generator to be up!
-    GeneratorClient.init(args.b, model_name=models[args.m], seed=args.s)
+    ddp_state.wait_for_everyone()
 
     # output directory
     torch.manual_seed(args.s)
@@ -155,7 +157,8 @@ def train(local_rank, world_size, args):
         device=ddp_state.device,
         **algo_kwargs,
     )
-    algo.model.gradient_checkpointing_enable()
+    if args.gcheck:
+        algo.model.gradient_checkpointing_enable()
     algo.model = DDP(
         algo.model,
         device_ids=[ddp_state.local_process_index],
@@ -467,10 +470,16 @@ if __name__ == "__main__":
         "--offbsz", type=int, help="Offline batch size (per gpu)", default=-1
     )
     parser.add_argument(
+        "--gcheck",
+        type=float,
+        help="Gradient checkpointing",
+        default=1,
+    )
+    parser.add_argument(
         "--wd",
         type=float,
         help="Weight decay",
-        default=0.,
+        default=0.0,
     )
     parser.add_argument(
         "--innbsz",
@@ -501,7 +510,7 @@ if __name__ == "__main__":
         "--sch", type=str, help="Scheduler", default="constant_with_warmup"
     )
     parser.add_argument("--dataset", type=str, help="Dataset", default="math")
-    parser.add_argument("-b", type=str, help="Backend", default="sgl")
+    parser.add_argument("-b", type=str, help="Backend", default="vllm")
     parser.add_argument("--tpsz", type=int, help="Tensor parallel size", default=1)
     parser.add_argument("--ss", type=str, help="Math subset to consider", default="all")
     parser.add_argument("--subs", type=int, help="Subsample examples", default=-1)
@@ -523,11 +532,11 @@ if __name__ == "__main__":
     # Parse final args
     final_args = parser.parse_args()
 
-    if is_server_up():
-        raise ValueError("Terminate previous server before starting!")
-
     os.environ["OMP_NUM_THREADS"] = "1"
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
+
+    if world_size > 1 and final_args.b == 'vllm':
+        raise ValueError("VLLM backend does not support distributed training.")
 
     train(local_rank, world_size, final_args)
