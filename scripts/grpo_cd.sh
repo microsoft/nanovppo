@@ -7,7 +7,7 @@
 export TRAIN_PROCS=1
 
 DIR="runs_outputs"
-NAME="grpo_cd_vllm"
+NAME="grpo_cd"
 
 torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     -m q1.5i \

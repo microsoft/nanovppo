@@ -5,9 +5,13 @@
 # SGL_DP_SIZE=1    : means that SGL will use 1 GPU
 
 export TRAIN_PROCS=1
+export SGL_BASE_GPU_ID=$TRAIN_PROCS
+export SGL_DP_SIZE=3
 
 DIR="runs_outputs"
-NAME="grpo_cd_vllm"
+NAME="vppo_cd"
+
+sudo kill -kill `ps -ax | grep sgl | awk '{print $1}' | xargs`
 
 torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     -m q1.5i \
@@ -15,8 +19,7 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     -t 1.0 \
     -k 4 \
     --lr 5e-6 \
-    -a grpo \
-    -b vllm \
+    -a vppo \
     --dataset cd \
     --onlbsz 16 \
     --offbsz 8 \
