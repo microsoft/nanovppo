@@ -14,6 +14,8 @@ from utils import (
     compute_kl_divergence,
     flatten,
     get_logprobs,
+    get_shifted_logprobs,
+    masked_mean,
     print_metrics,
     repeat,
 )
@@ -61,14 +63,14 @@ class RFT(Algo):
             model_name,
             attn_implementation="flash_attention_2",
             torch_dtype=torch.bfloat16,
-            device_map=device
+            device_map=device,
         )
         if self.kl_ctl:
             self.ref_model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 attn_implementation="flash_attention_2",
                 torch_dtype=torch.bfloat16,
-                device_map=device
+                device_map=device,
             )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
@@ -116,7 +118,12 @@ class RFT(Algo):
                 )
             )
 
-        rewards = list(self.reward_func(evaluation_requests))
+        rewards = self.reward_func(evaluation_requests)
+        if type(rewards) is tuple:
+            for key, value in rewards[1].items():
+                self.stats.accumulate("avg_" + key, np.mean(value))
+            rewards = rewards[0]
+
         RequestUtils.populate(evaluation_requests, rewards, "reward")
 
         max_reward, avg_reward = RequestUtils.gather_max_avg_reward(evaluation_requests)
@@ -227,36 +234,36 @@ class RFT(Algo):
                 attention_mask=mb_query_response_mask,
                 return_dict=True,
             )
-            logits = output.logits / (self.temperature + 1e-7)
-            logits = torch.nn.functional.log_softmax(logits, dim=-1)
+            mb_logprobs = get_shifted_logprobs(
+                output.logits,
+                mb_query_response,
+                mb_response_mask,
+                temperature=self.temperature,
+            )
 
-            shift_logits = logits[:, :-1]
-            shift_labels = mb_query_response[:, 1:]
-            shift_labels_mask = mb_response_mask[:, 1:]
-            mb_logprobs = torch.gather(
-                shift_logits, 2, shift_labels.unsqueeze(-1)
-            ).squeeze(-1)
-
-            loss = -mb_logprobs * mb_advantage.unsqueeze(-1)
-            loss = (loss * shift_labels_mask).sum() / shift_labels_mask.sum()
+            per_token_loss = -mb_logprobs * mb_advantage.unsqueeze(-1)
+            labels_mask = mb_response_mask[:, 1:]
 
             if self.kl_ctl:
                 mb_ref_logprobs = episode_returns[-1]
                 mb_ref_logprobs = mb_ref_logprobs[:, : max_tokens - 1]
-                ref_kl = compute_kl_divergence(
-                    mb_ref_logprobs, mb_logprobs, mask=shift_labels_mask
-                )
-                loss += self.kl_ctl * ref_kl
-                self.stats.accumulate("kl_loss", ref_kl.item())
-                del mb_ref_logprobs
 
-            del (
-                mb_logprobs,
-                shift_logits,
-                shift_labels,
-                shift_labels_mask,
-                logits,
-                output,
+                per_token_kl = (
+                    torch.exp(mb_ref_logprobs - mb_logprobs)
+                    - (mb_ref_logprobs - mb_logprobs)
+                    - 1
+                )
+
+                per_token_loss = per_token_loss + self.kl_ctl * per_token_kl
+                self.stats.accumulate(
+                    "kl_loss",
+                    masked_mean(per_token_kl, labels_mask, axis=1).mean().item(),
+                )
+
+            loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
+
+            self.stats.accumulate(
+                "entropy",
+                -((mb_logprobs * labels_mask).sum() / labels_mask.sum()).item(),
             )
-            torch.cuda.empty_cache()
             return loss

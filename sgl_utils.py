@@ -95,8 +95,18 @@ class SGLGenerator:
         self.model_name = model_name
         self.seed = seed
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+        if is_server_up():
+            raise ValueError("Terminate previous server before starting!")
+
         self.start()
         SGLGenerator._instance = self
+
+    def sleep(self):
+        pass
+    
+    def wake_up(self):
+        pass
 
     def shutdown(self):
         from sglang.utils import terminate_process

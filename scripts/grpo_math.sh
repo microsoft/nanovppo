@@ -1,7 +1,3 @@
-
-DIR="runs_outputs"
-NAME="grpo"
-
 # This will use 2 GPUs total: 1 process to train the model + 1 SGL GPU to do online inferencing
 
 # TRAIN_PROCS=1    : num training processes
@@ -16,6 +12,9 @@ NAME="grpo"
 # --offepc 4  : 4 epochs of offline training, per each online batch we do 4 epochs of offline training
 # -s 42       : seed
 # -t500       : test on MATH-500 (speeds up)
+
+DIR="runs_outputs"
+NAME="grpo"
 
 export TRAIN_PROCS=1
 export SGL_BASE_GPU_ID=$TRAIN_PROCS
@@ -36,10 +35,9 @@ torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
     --dataset math \
     --onlbsz 16 \
     --offbsz 8 \
+    --maxepochs 1000 \
     --maxtok 1024 \
-    --maxstp 12000 \
     --offepc 1 \
     -s 42 \
     --kl_ctl 1e-6 \
-    --evalevery 200 \
-    --ema 0.4
+    --evalevery 10

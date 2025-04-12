@@ -363,7 +363,10 @@ def compute_vppo_value_estimation(
     ]
 
     # compute rewards
-    rewards = list(reward_func(vppo_requests + orig_requests))
+    rewards = reward_func(vppo_requests + orig_requests)
+    if type(rewards) == tuple:
+        rewards = rewards[0]
+
     vppo_rewards = rewards[: len(vppo_requests)]
     orig_rewards = rewards[len(vppo_requests) :]
     RequestUtils.populate(vppo_requests, vppo_rewards, "reward")
