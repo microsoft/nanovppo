@@ -298,6 +298,9 @@ def train(local_rank, world_size, args):
             part_queries, part_labels = zip(*partial_batch)
             episode_data = algo.gather_episodes(part_queries, part_labels)
 
+        # sleep if possible (VLLM)
+        GeneratorClient.get().sleep()
+
         epoch_dataset = MultiTensorDataset(*episode_data)
         dataloader = get_dataloader(epoch_dataset, inn_batch_size)
 
@@ -377,6 +380,9 @@ def train(local_rank, world_size, args):
         eval_step = (global_epoch + 1) % args.evalevery == 0
 
         if eval_step:
+            # sleep if possible (VLLM)
+            GeneratorClient.get().wake_up()
+
             acc_math = np.mean(
                 eval_dataset(test_queries, test_labels, temperature=0.35, top_p=0.9)
             )

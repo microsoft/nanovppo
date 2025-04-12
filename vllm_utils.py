@@ -51,6 +51,15 @@ class VLLMGeneratorClient:
             enable_sleep_mode=True,
         )
 
+    def sleep(self):
+        self.llm.sleep(1)
+
+    def wake_up(self):
+        self.llm.wake_up()
+
+    def shutdown(self):
+        pass
+
     @classmethod
     def get(cls):
         assert cls._instance is not None, "VLLMGeneratorClient not initialized"
@@ -58,6 +67,8 @@ class VLLMGeneratorClient:
 
     @ddp_state.on_main_process
     def load_weights(self, model):
+        self.wake_up()
+
         state_dict = (
             model.module.state_dict()
             if hasattr(model, "module")

@@ -102,6 +102,12 @@ class SGLGenerator:
         self.start()
         SGLGenerator._instance = self
 
+    def sleep(self):
+        pass
+    
+    def wake_up(self):
+        pass
+
     def shutdown(self):
         from sglang.utils import terminate_process
         if self.process:
