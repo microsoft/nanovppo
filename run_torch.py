@@ -17,6 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 from accelerate import Accelerator
 
+from algos.tpo import TPO
 from algos.vppo import VPPO
 from dataset.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
 from dataset.cd_utils import compute_cd_reward, eval_cd, prepare_cd_dataset
@@ -58,10 +59,10 @@ import torch.multiprocessing as mp
 
 models = {
     "q1.5": "Qwen/Qwen2.5-1.5B",
+    "q1.5i": "Qwen/Qwen2.5-1.5B-Instruct",
     "q3": "Qwen/Qwen2.5-3B",
     "q3i": "Qwen/Qwen2.5-3B-Instruct",
     "q1.5m": "Qwen/Qwen2.5-Math-1.5B",
-    "q1.5i": "Qwen/Qwen2.5-1.5B-Instruct",
     "phi": "microsoft/Phi-3-mini-4k-instruct",
     "ll8b": "meta-llama/Llama-3.1-8B-Instruct",
 }
@@ -71,6 +72,7 @@ algos = {
     "rft": RFT,
     "grpo": GRPO,
     "vppo": VPPO,
+    "tpo": TPO,
 }
 
 

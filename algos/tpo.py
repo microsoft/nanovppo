@@ -31,7 +31,28 @@ from algos.algo import Algo, Request, RequestUtils
 from algos.rft import RFT
 
 
-TEACHER_TEMPLATE = "Example: {best_prompt}\n\n{best_response}\n\n{current_prompt}"
+TEACHER_PROMPT = (
+    "Generate reasonings that satisfy the following criterion:\n\n{criterion}"
+)
+
+VERIFIER_TEMPLATE = "Answer with YES or NO whether the following satisfies the criterion for a good reasoning.\n\nCriterion:\n{criterion}\n\nReasoning:{reasoning}\n\nDoes the reasoning satisfy the criterion? (YES/NO):"
+
+EXTRACTOR_TEMPLATE_USER = """
+Analyze the two reasonings. The good reasoning was preferred to the bad reasoning. 
+
+CRITERIA GENERATION: Create a *specific* criterion such that the criterion is reasonable, and reflects the preference
+between the two reasonings. The criterion should be a single sentence, and should not be too long.
+
+The criterion should be what makes the good reasoning better than the bad reasoning.
+
+Good reasoning:\n\n
+{good_reasoning}
+
+Bad reasoning:\n\n
+{bad_reasoning}
+"""
+
+EXTRACTOR_TEMPLATE_ASS = "Criterion:"
 
 
 class TPO(Algo):
@@ -80,6 +101,8 @@ class TPO(Algo):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        self.criterion = None
+
         self.k = k
         self.tea_ctl = algo_kwargs["tea_ctl"]
         self.kl_ctl = algo_kwargs["kl_ctl"]
@@ -90,9 +113,191 @@ class TPO(Algo):
         self.max_tokens = max_tokens
         self.stats = AccumulatorDict()
 
+    def build_tensors_for_criterion_verifier(
+        self,
+        tokenizer,
+        verifier_messages,
+        verifier_answers,
+        num_examples_in_batch,
+    ):
+        ver_query_response, ver_query_response_mask, ver_response_mask = (
+            create_joint_tensors(
+                self.tokenizer,
+                verifier_messages,
+                verifier_answers,
+                is_final=[1] * len(verifier_messages),
+            )
+        )
+        if num_examples_in_batch - len(ver_query_response) > 0:
+            ver_query_response = torch.cat(
+                [
+                    ver_query_response,
+                    torch.zeros(
+                        num_examples_in_batch - len(ver_query_response),
+                        ver_query_response.shape[1],
+                        dtype=torch.long,
+                    ),
+                ],
+                dim=0,
+            )
+            ver_query_response_mask = torch.cat(
+                [
+                    ver_query_response_mask,
+                    torch.zeros(
+                        num_examples_in_batch - len(ver_query_response_mask),
+                        ver_query_response_mask.shape[1],
+                        dtype=ver_query_response_mask.dtype,
+                    ),
+                ],
+                dim=0,
+            )
+            ver_response_mask = torch.cat(
+                [
+                    ver_response_mask,
+                    torch.zeros(
+                        num_examples_in_batch - len(ver_response_mask),
+                        ver_response_mask.shape[1],
+                        dtype=ver_response_mask.dtype,
+                    ),
+                ],
+                dim=0,
+            )
+        else:
+            # cut the tensors to the maximum length
+            ver_query_response = ver_query_response[:num_examples_in_batch]
+            ver_query_response_mask = ver_query_response_mask[:num_examples_in_batch]
+            ver_response_mask = ver_response_mask[:num_examples_in_batch]
+
+        return (
+            ver_query_response,
+            ver_query_response_mask,
+            ver_response_mask,
+        )
+
+    def build_tensors_for_criterion_extractor(
+        self,
+        tokenizer,
+        ext_messages,
+        ext_criteria,
+        criteria_scores,
+        num_examples_in_batch,
+    ):
+        criterion_advantages = torch.tensor(
+            (criteria_scores - criteria_scores.mean()).reshape(-1).tolist(),
+            dtype=torch.float32,
+        )
+        ext_query_response, ext_query_response_mask, ext_response_mask = (
+            create_joint_tensors(
+                self.tokenizer,
+                ext_messages,
+                ext_criteria,
+                is_final=[1] * len(ext_messages),
+            )
+        )
+        if num_examples_in_batch - len(ext_query_response) > 0:
+            # pad to query_response length
+            criterion_advantages = torch.cat(
+                [
+                    criterion_advantages,
+                    torch.zeros(num_examples_in_batch - len(criterion_advantages)),
+                ],
+            )
+            ext_query_response = torch.cat(
+                [
+                    ext_query_response,
+                    torch.zeros(
+                        num_examples_in_batch - len(ext_query_response),
+                        ext_query_response.shape[1],
+                        dtype=torch.long,
+                    ),
+                ],
+                dim=0,
+            )
+            ext_query_response_mask = torch.cat(
+                [
+                    ext_query_response_mask,
+                    torch.zeros(
+                        num_examples_in_batch - len(ext_query_response_mask),
+                        ext_query_response_mask.shape[1],
+                        dtype=ext_query_response_mask.dtype,
+                    ),
+                ],
+                dim=0,
+            )
+            ext_response_mask = torch.cat(
+                [
+                    ext_response_mask,
+                    torch.zeros(
+                        num_examples_in_batch - len(ext_response_mask),
+                        ext_response_mask.shape[1],
+                        dtype=ext_response_mask.dtype,
+                    ),
+                ],
+                dim=0,
+            )
+        else:
+            # cut the tensors to the maximum length
+            ext_query_response = ext_query_response[:num_examples_in_batch]
+            ext_query_response_mask = ext_query_response_mask[:num_examples_in_batch]
+            ext_response_mask = ext_response_mask[:num_examples_in_batch]
+            criterion_advantages = criterion_advantages[:num_examples_in_batch]
+
+        return (
+            criterion_advantages,
+            ext_query_response,
+            ext_query_response_mask,
+            ext_response_mask,
+        )
+
+    def create_best_worst_pairs(
+        self,
+        responses: List[str],
+        rewards: List[float],
+        k: int,
+        n: int,
+    ) -> List[tuple]:
+        best_worst_pairs = []
+        rewards_reshaped = np.array(rewards).reshape(-1, k)
+        for i, example_rewards in enumerate(rewards_reshaped):
+            # Create all pairs of (high, low) reward responses
+            for k in range(self.k):
+                for j in range(self.k):
+                    if example_rewards[k] > example_rewards[j]:
+                        absolute_best_idx = i * self.k + k
+                        absolute_worst_idx = i * self.k + j
+                        best_response = responses[absolute_best_idx]
+                        worst_response = responses[absolute_worst_idx]
+                        best_response_reward = example_rewards[k]
+                        worst_response_reward = example_rewards[j]
+                        best_worst_pairs.append(
+                            (
+                                absolute_best_idx,
+                                absolute_worst_idx,
+                                best_response_reward,
+                                worst_response_reward,
+                                best_response,
+                                worst_response,
+                            )
+                        )
+
+        best_worst_pairs = list(set(best_worst_pairs))
+        np.random.shuffle(best_worst_pairs)
+        best_worst_pairs = best_worst_pairs[:n]
+        return list(set(best_worst_pairs))
+
     @torch.no_grad
     def gather_episodes(self, messages, labels):
         engine = GeneratorClient.get()
+
+        messages = copy.deepcopy(messages)
+        if self.criterion is not None:
+            # add the criterion to the system messages
+            for message in messages:
+                message[0]["content"] = (
+                    message[0]["content"]
+                    + "\n\n"
+                    + TEACHER_PROMPT.format(criterion=self.criterion)
+                )
 
         # Gather first set of completions
         responses, finished = engine.chat(
@@ -155,51 +360,139 @@ class TPO(Algo):
         ddp_state.print("Finished: ", (100.0 * np.sum(finished)) / len(finished), "%")
         ddp_state.print("====================================")
 
-        rewards = np.asarray(rewards).reshape(-1, self.k)
-        advantages = rewards - rewards.mean(axis=1, keepdims=True)
-        if not self.drgpo:
-            advantages = advantages / (rewards.std(axis=1, keepdims=True) + 1e-8)
-        advantages = advantages.reshape(-1).tolist()
-
         query_response, query_response_mask, response_mask = create_joint_tensors(
             self.tokenizer,
             messages,
             responses,
             is_final=finished,
         )
-        advantages = torch.tensor(advantages, dtype=torch.float32)
         self.stats.accumulate(
             "avg_resp_length", response_mask.sum(1).float().mean().item()
         )
 
-        # best response
-        best_response = responses[np.argmax(rewards)]
-        best_prompt = messages[np.argmax(rewards)][-1]["content"]
-
-        # build the teacher with the best response in context
-        teacher_messages = copy.deepcopy(messages)
-        for teacher_message in teacher_messages:
-            assert teacher_message[-1]["role"] == "user"
-            teacher_message[-1]["content"] = TEACHER_TEMPLATE.format(
-                best_prompt=best_prompt,
-                best_response=best_response,
-                current_prompt=teacher_message[-1]["content"],
-            )
-        tea_query_response, tea_query_response_mask, tea_response_mask = (
-            create_joint_tensors(
-                self.tokenizer,
-                teacher_messages,
-                responses,
-                is_final=finished,
-            )
+        best_worst_pairs = self.create_best_worst_pairs(
+            responses=responses,
+            rewards=rewards,
+            k=self.k,
+            n=16,
         )
-        tea_logprobs = get_logprobs(
-            self.model,
-            tea_query_response,
-            tea_query_response_mask,
-            tea_response_mask,
+
+        extactor_messages = []
+        for i, (bidx, widx, brw, wrw, br, wr) in enumerate(best_worst_pairs):
+            user_message = EXTRACTOR_TEMPLATE_USER.format(
+                good_reasoning=br,
+                bad_reasoning=wr,
+            )
+            extactor_messages.append(
+                [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": EXTRACTOR_TEMPLATE_ASS},
+                ]
+            )
+
+        criteria, _ = engine.chat(
+            extactor_messages,
             temperature=self.temperature,
-            reduction="none",
+            n=1,
+            max_tokens=self.max_tokens,
+            return_finished=True,
+        )
+        criteria = flatten(criteria)
+
+        # we need to verify the criteria now
+        verifier_exec_messages = []
+        verifier_sft_messages = []
+        verifier_sft_answers = []
+
+        for i, response in enumerate(responses):
+            for j in range(len(criteria)):
+                user_message = VERIFIER_TEMPLATE.format(
+                    criterion=criteria[j],
+                    reasoning=response,
+                )
+                verifier_exec_messages.append(
+                    [{"role": "user", "content": user_message}]
+                )
+
+        for j in range(len(best_worst_pairs)):
+            criterion = criteria[j]
+            bidx, widx, br, wr, best_response, worst_response = best_worst_pairs[j]
+            verifier_sft_messages.append(
+                [
+                    {
+                        "role": "user",
+                        "content": VERIFIER_TEMPLATE.format(
+                            criterion=criteria[j], reasoning=best_response
+                        ),
+                    },
+                ]
+            )
+            verifier_sft_messages.append(
+                [
+                    {
+                        "role": "user",
+                        "content": VERIFIER_TEMPLATE.format(
+                            criterion=criteria[j], reasoning=worst_response
+                        ),
+                    },
+                ]
+            )
+            verifier_sft_answers.append("YES")
+            verifier_sft_answers.append("NO")
+
+        scores, _ = engine.chat(
+            verifier_exec_messages,
+            temperature=0.35,
+            n=1,
+            max_tokens=4,
+            return_finished=True,
+        )
+        scores = flatten(scores)
+        scores = [1 if score.strip() in ["YES", "yes"] else 0 for score in scores]
+
+        scores = np.array(scores).reshape(len(responses), len(criteria))
+        scores_diff = np.asarray(
+            [
+                scores[bidx, :] - scores[widx, :]
+                for bidx, widx, _, _, _, _ in best_worst_pairs
+            ]
+        )
+
+        criteria_scores = scores_diff.mean(axis=0)
+        best_criterion = np.argmax(criteria_scores)
+
+        print("Best criterion:\n", criteria[best_criterion])
+        print("Criterion score:\n", criteria_scores[best_criterion])
+
+        self.criterion = criteria[best_criterion]
+
+        rewards = np.asarray(rewards).reshape(-1, self.k)
+        advantages = rewards - rewards.mean(axis=1, keepdims=True)
+        if not self.drgpo:
+            advantages = advantages / (rewards.std(axis=1, keepdims=True) + 1e-8)
+        advantages = advantages.reshape(-1).tolist()
+        advantages = torch.tensor(advantages, dtype=torch.float32)
+
+        (
+            extr_advantages,
+            extr_query_response,
+            extr_query_response_mask,
+            extr_response_mask,
+        ) = self.build_tensors_for_criterion_extractor(
+            self.tokenizer,
+            extactor_messages,
+            criteria,
+            criteria_scores,
+            num_examples_in_batch=len(advantages),
+        )
+
+        ver_query_response, ver_query_response_mask, ver_response_mask = (
+            self.build_tensors_for_criterion_verifier(
+                self.tokenizer,
+                verifier_sft_messages,
+                verifier_sft_answers,
+                num_examples_in_batch=len(advantages),
+            )
         )
 
         # probabilities under the reference policy
@@ -229,8 +522,13 @@ class TPO(Algo):
             advantages,
             ref_logprobs,
             old_logprobs,
-            tea_logprobs,
-            tea_response_mask,
+            extr_query_response,
+            extr_query_response_mask,
+            extr_response_mask,
+            extr_advantages,
+            ver_query_response,
+            ver_query_response_mask,
+            ver_response_mask,
         )
 
     def compute_loss(self, episode_returns) -> float:
@@ -241,8 +539,13 @@ class TPO(Algo):
             mb_advantage,
             mb_ref_logprobs,
             mb_old_logprobs,
-            mb_tea_logprobs,
-            mb_tea_response_mask,
+            mb_ext_query_response,
+            mb_ext_query_response_mask,
+            mb_ext_response_mask,
+            mb_ext_advantage,
+            mb_ver_query_response,
+            mb_ver_query_response_mask,
+            mb_ver_response_mask,
         ) = episode_returns
 
         with torch.autocast(
@@ -286,19 +589,67 @@ class TPO(Algo):
                 - 1
             )
 
-            # need to extract the logprobs of the teacher model corresponding to the response tokens
-            tea_logp = mb_tea_logprobs[mb_tea_response_mask[:, 1:] == 1]
-            stu_logp = mb_logprobs[labels_mask == 1]
-            per_token_tea_kl = (
-                torch.exp(tea_logp - stu_logp) - (tea_logp - stu_logp) - 1
-            )
-
             per_token_loss = pg_losses + self.kl_ctl * per_token_kl
-            per_token_tea_kl = per_token_tea_kl.mean()
-            pg_loss = (
-                masked_mean(per_token_loss, labels_mask, axis=1).mean()
-                + self.tea_ctl * per_token_tea_kl
-            )
+            pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
+
+            max_ext_tokens = mb_ext_query_response_mask.sum(dim=1).max()
+            if max_ext_tokens.item() > 0:
+                mb_ext_query_response = mb_ext_query_response[:, :max_ext_tokens]
+                mb_ext_query_response_mask = mb_ext_query_response_mask[
+                    :, :max_ext_tokens
+                ]
+                mb_ext_response_mask = mb_ext_response_mask[:, :max_ext_tokens]
+
+                output = self.model(
+                    input_ids=mb_ext_query_response,
+                    attention_mask=mb_ext_query_response_mask,
+                    return_dict=True,
+                )
+
+                mb_v_logprobs = get_shifted_logprobs(
+                    output.logits,
+                    mb_ext_query_response,
+                    mb_ext_response_mask,
+                    temperature=self.temperature,
+                )
+                mb_v_label_mask = mb_ext_response_mask[:, 1:]
+
+                # compute just the reinforce loss
+                reinforce_loss = -mb_ext_advantage.unsqueeze(1) * mb_v_logprobs
+                reinforce_loss = masked_mean(
+                    reinforce_loss, mb_v_label_mask, axis=1
+                ).mean()
+                self.stats.accumulate("extractor_loss", reinforce_loss.item())
+                pg_loss += reinforce_loss
+
+            max_ver_tokens = mb_ver_query_response_mask.sum(dim=1).max()
+            if max_ver_tokens.item() > 0:
+                mb_ver_query_response = mb_ver_query_response[:, :max_ver_tokens]
+                mb_ver_query_response_mask = mb_ver_query_response_mask[
+                    :, :max_ver_tokens
+                ]
+                mb_ver_response_mask = mb_ver_response_mask[:, :max_ver_tokens]
+
+                output = self.model(
+                    input_ids=mb_ver_query_response,
+                    attention_mask=mb_ver_query_response_mask,
+                    return_dict=True,
+                )
+
+                mb_v_logprobs = get_shifted_logprobs(
+                    output.logits,
+                    mb_ver_query_response,
+                    mb_ver_response_mask,
+                    temperature=self.temperature,
+                )
+                mb_v_label_mask = mb_ver_response_mask[:, 1:]
+
+                reinforce_loss = -mb_v_logprobs
+                reinforce_loss = masked_mean(
+                    reinforce_loss, mb_v_label_mask, axis=1
+                ).mean()
+                self.stats.accumulate("verifier_loss", reinforce_loss.item())
+                pg_loss += reinforce_loss
 
             self.stats.accumulate(
                 "entropy",
