@@ -161,6 +161,7 @@ class GRPO(Algo):
         self.stats.accumulate("avg_resp_length", response_mask.sum(1).float().mean().item())
 
         # probabilities under the reference policy
+        self.ref_model.to(self.model.device)
         ref_logprobs = get_logprobs(
             self.ref_model,
             query_response,
@@ -169,6 +170,8 @@ class GRPO(Algo):
             temperature=self.temperature,
             reduction="none",
         )
+        self.ref_model.to("cpu")
+        torch.cuda.empty_cache()
 
         # probabilities under the sampling policy
         old_logprobs = get_logprobs(

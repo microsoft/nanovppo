@@ -31,28 +31,32 @@ from algos.algo import Algo, Request, RequestUtils
 from algos.rft import RFT
 
 
-TEACHER_PROMPT = (
-    "Generate reasonings that satisfy the following criterion:\n\n{criterion}"
-)
+TEACHER_PROMPT = "Good reasonings should satisfy the following principle:\n\n{criterion}"
 
-VERIFIER_TEMPLATE = "Answer with YES or NO whether the following satisfies the criterion for a good reasoning.\n\nCriterion:\n{criterion}\n\nReasoning:{reasoning}\n\nDoes the reasoning satisfy the criterion? (YES/NO):"
+VERIFIER_TEMPLATE = "Answer with YES or NO whether the following reasoning satisfies the principle.\n\nPrinciple:\n{criterion}\n\nReasoning:\n{reasoning}\n\nDoes this reasoning adhere to the principle? (YES/NO):"
 
-EXTRACTOR_TEMPLATE_USER = """
-Analyze the two reasonings. The good reasoning was preferred to the bad reasoning. 
+EXTRACTOR_TEMPLATE_USER = """You are given two reasonings to solve the same problem, one is better than the other. Why is one reasoning better than the other?
 
-CRITERIA GENERATION: Create a *specific* criterion such that the criterion is reasonable, and reflects the preference
-between the two reasonings. The criterion should be a single sentence, and should not be too long.
+Come up with a principle that should be general enough to apply to all the reasonings, but specific enough to distinguish between them.
+The principle should be a clear and concise statement that captures the essence of what makes a successful reasoning.
+Please read carefully and then write a principle that characterizes the better reasoning.
 
-The criterion should be what makes the good reasoning better than the bad reasoning.
+This was the problem:
+{problem}
 
-Good reasoning:\n\n
+Better reasoning:\n\n
+===============
 {good_reasoning}
+===============
 
-Bad reasoning:\n\n
+Worse reasoning:\n\n
+===============
 {bad_reasoning}
+===============
 """
 
-EXTRACTOR_TEMPLATE_ASS = "Criterion:"
+
+EXTRACTOR_TEMPLATE_ASS = "Principle:"
 
 
 class TPO(Algo):
@@ -67,10 +71,13 @@ class TPO(Algo):
             default=0.1,
             help="Teacher distillation term control",
         )
+
         parser.add_argument(
             "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
         )
         parser.add_argument("--drgrpo", type=int, default=0, help="If 1, use DrGRPO")
+        parser.add_argument("--train_ext", type=int, default=0, help="If 1, train the feature extractor")
+        parser.add_argument("--train_ver", type=int, default=0, help="If 1, train the verifier")
         return parser
 
     def __init__(
@@ -101,13 +108,14 @@ class TPO(Algo):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self.criterion = None
-
+        self.criterion = []
         self.k = k
         self.tea_ctl = algo_kwargs["tea_ctl"]
         self.kl_ctl = algo_kwargs["kl_ctl"]
         self.kl_max = algo_kwargs["kl_max"]
         self.drgpo = algo_kwargs["drgrpo"]
+        self.trext = algo_kwargs["train_ext"]
+        self.trver = algo_kwargs["train_ver"]
         self.reward_func = reward_func
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -290,13 +298,12 @@ class TPO(Algo):
         engine = GeneratorClient.get()
 
         messages = copy.deepcopy(messages)
-        if self.criterion is not None:
-            # add the criterion to the system messages
-            for message in messages:
-                message[0]["content"] = (
-                    message[0]["content"]
-                    + "\n\n"
-                    + TEACHER_PROMPT.format(criterion=self.criterion)
+
+        # add the teacher prompt
+        if self.criterion:
+            for i in range(len(messages)):
+                messages[i][0]["content"] += "\n\n" + TEACHER_PROMPT.format(
+                    criterion=self.criterion[i % len(self.criterion)]
                 )
 
         # Gather first set of completions
@@ -380,6 +387,7 @@ class TPO(Algo):
         extactor_messages = []
         for i, (bidx, widx, brw, wrw, br, wr) in enumerate(best_worst_pairs):
             user_message = EXTRACTOR_TEMPLATE_USER.format(
+                problem=messages[bidx][-1]["content"],
                 good_reasoning=br,
                 bad_reasoning=wr,
             )
@@ -404,6 +412,7 @@ class TPO(Algo):
         verifier_sft_messages = []
         verifier_sft_answers = []
 
+        # create pairs of criteria, response
         for i, response in enumerate(responses):
             for j in range(len(criteria)):
                 user_message = VERIFIER_TEMPLATE.format(
@@ -414,6 +423,7 @@ class TPO(Algo):
                     [{"role": "user", "content": user_message}]
                 )
 
+        # now create sft data for the verifier
         for j in range(len(best_worst_pairs)):
             criterion = criteria[j]
             bidx, widx, br, wr, best_response, worst_response = best_worst_pairs[j]
@@ -459,12 +469,12 @@ class TPO(Algo):
         )
 
         criteria_scores = scores_diff.mean(axis=0)
-        best_criterion = np.argmax(criteria_scores)
+        ordered_indices = np.argsort(criteria_scores)[::-1]
 
-        print("Best criterion:\n", criteria[best_criterion])
-        print("Criterion score:\n", criteria_scores[best_criterion])
-
-        self.criterion = criteria[best_criterion]
+        print("Best criterion:\n", criteria[ordered_indices[0]])
+        print("Criterion score:\n", criteria_scores[ordered_indices[0]])
+        self.stats.accumulate("avg_criterion_score", criteria_scores[ordered_indices[0]])
+        self.criterion = [criteria[i] for i in ordered_indices[:self.k]]
 
         rewards = np.asarray(rewards).reshape(-1, self.k)
         advantages = rewards - rewards.mean(axis=1, keepdims=True)
@@ -473,29 +483,32 @@ class TPO(Algo):
         advantages = advantages.reshape(-1).tolist()
         advantages = torch.tensor(advantages, dtype=torch.float32)
 
-        (
-            extr_advantages,
-            extr_query_response,
-            extr_query_response_mask,
-            extr_response_mask,
-        ) = self.build_tensors_for_criterion_extractor(
-            self.tokenizer,
-            extactor_messages,
-            criteria,
-            criteria_scores,
-            num_examples_in_batch=len(advantages),
-        )
-
-        ver_query_response, ver_query_response_mask, ver_response_mask = (
-            self.build_tensors_for_criterion_verifier(
+        if self.trext:
+            (
+                extr_advantages,
+                extr_query_response,
+                extr_query_response_mask,
+                extr_response_mask,
+            ) = self.build_tensors_for_criterion_extractor(
                 self.tokenizer,
-                verifier_sft_messages,
-                verifier_sft_answers,
+                extactor_messages,
+                criteria,
+                criteria_scores,
                 num_examples_in_batch=len(advantages),
             )
-        )
+
+        if self.trver:
+            ver_query_response, ver_query_response_mask, ver_response_mask = (
+                self.build_tensors_for_criterion_verifier(
+                    self.tokenizer,
+                    verifier_sft_messages,
+                    verifier_sft_answers,
+                    num_examples_in_batch=len(advantages),
+                )
+            )
 
         # probabilities under the reference policy
+        self.ref_model.to(self.model.device)
         ref_logprobs = get_logprobs(
             self.ref_model,
             query_response,
@@ -504,6 +517,8 @@ class TPO(Algo):
             temperature=self.temperature,
             reduction="none",
         )
+        self.ref_model.to("cpu")
+        torch.cuda.empty_cache()
 
         # probabilities under the sampling policy
         old_logprobs = get_logprobs(
@@ -515,21 +530,28 @@ class TPO(Algo):
             reduction="none",
         )
 
-        return (
+        outputs = (
             query_response,
             query_response_mask,
             response_mask,
             advantages,
             ref_logprobs,
             old_logprobs,
-            extr_query_response,
-            extr_query_response_mask,
-            extr_response_mask,
-            extr_advantages,
-            ver_query_response,
-            ver_query_response_mask,
-            ver_response_mask,
         )
+        if self.trext:
+            outputs += (
+                extr_advantages,
+                extr_query_response,
+                extr_query_response_mask,
+                extr_response_mask,
+            )
+        if self.trver:
+            outputs += (
+                ver_query_response,
+                ver_query_response_mask,
+                ver_response_mask,
+            )
+        return outputs
 
     def compute_loss(self, episode_returns) -> float:
         (
@@ -539,14 +561,20 @@ class TPO(Algo):
             mb_advantage,
             mb_ref_logprobs,
             mb_old_logprobs,
-            mb_ext_query_response,
-            mb_ext_query_response_mask,
-            mb_ext_response_mask,
-            mb_ext_advantage,
-            mb_ver_query_response,
-            mb_ver_query_response_mask,
-            mb_ver_response_mask,
-        ) = episode_returns
+        ) = episode_returns[:6]
+        if self.trext:
+            (
+                mb_ext_advantage,
+                mb_ext_query_response,
+                mb_ext_query_response_mask,
+                mb_ext_response_mask,
+            ) = episode_returns[6:10]
+        if self.trver:
+            (
+                mb_ver_query_response,
+                mb_ver_query_response_mask,
+                mb_ver_response_mask,
+            ) = episode_returns[10:13]
 
         with torch.autocast(
             device_type="cuda",
@@ -591,65 +619,70 @@ class TPO(Algo):
 
             per_token_loss = pg_losses + self.kl_ctl * per_token_kl
             pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
+            
+            del output
+            torch.cuda.empty_cache()
 
-            max_ext_tokens = mb_ext_query_response_mask.sum(dim=1).max()
-            if max_ext_tokens.item() > 0:
-                mb_ext_query_response = mb_ext_query_response[:, :max_ext_tokens]
-                mb_ext_query_response_mask = mb_ext_query_response_mask[
-                    :, :max_ext_tokens
-                ]
-                mb_ext_response_mask = mb_ext_response_mask[:, :max_ext_tokens]
+            if self.trext:
+                max_ext_tokens = mb_ext_query_response_mask.sum(dim=1).max()
+                if max_ext_tokens.item() > 0:
+                    mb_ext_query_response = mb_ext_query_response[:, :max_ext_tokens]
+                    mb_ext_query_response_mask = mb_ext_query_response_mask[
+                        :, :max_ext_tokens
+                    ]
+                    mb_ext_response_mask = mb_ext_response_mask[:, :max_ext_tokens]
 
-                output = self.model(
-                    input_ids=mb_ext_query_response,
-                    attention_mask=mb_ext_query_response_mask,
-                    return_dict=True,
-                )
+                    output = self.model(
+                        input_ids=mb_ext_query_response,
+                        attention_mask=mb_ext_query_response_mask,
+                        return_dict=True,
+                    )
 
-                mb_v_logprobs = get_shifted_logprobs(
-                    output.logits,
-                    mb_ext_query_response,
-                    mb_ext_response_mask,
-                    temperature=self.temperature,
-                )
-                mb_v_label_mask = mb_ext_response_mask[:, 1:]
+                    mb_v_logprobs = get_shifted_logprobs(
+                        output.logits,
+                        mb_ext_query_response,
+                        mb_ext_response_mask,
+                        temperature=self.temperature,
+                    )
+                    mb_ext_label_mask = mb_ext_response_mask[:, 1:]
 
-                # compute just the reinforce loss
-                reinforce_loss = -mb_ext_advantage.unsqueeze(1) * mb_v_logprobs
-                reinforce_loss = masked_mean(
-                    reinforce_loss, mb_v_label_mask, axis=1
-                ).mean()
-                self.stats.accumulate("extractor_loss", reinforce_loss.item())
-                pg_loss += reinforce_loss
+                    # compute just the reinforce loss
+                    reinforce_loss = -mb_ext_advantage.unsqueeze(1) * mb_v_logprobs
+                    reinforce_loss = masked_mean(
+                        reinforce_loss, mb_ext_label_mask, axis=1
+                    ).mean()
+                    self.stats.accumulate("extractor_loss", reinforce_loss.item())
+                    pg_loss += reinforce_loss
 
-            max_ver_tokens = mb_ver_query_response_mask.sum(dim=1).max()
-            if max_ver_tokens.item() > 0:
-                mb_ver_query_response = mb_ver_query_response[:, :max_ver_tokens]
-                mb_ver_query_response_mask = mb_ver_query_response_mask[
-                    :, :max_ver_tokens
-                ]
-                mb_ver_response_mask = mb_ver_response_mask[:, :max_ver_tokens]
+            if self.trver:
+                max_ver_tokens = mb_ver_query_response_mask.sum(dim=1).max()
+                if max_ver_tokens.item() > 0:
+                    mb_ver_query_response = mb_ver_query_response[:, :max_ver_tokens]
+                    mb_ver_query_response_mask = mb_ver_query_response_mask[
+                        :, :max_ver_tokens
+                    ]
+                    mb_ver_response_mask = mb_ver_response_mask[:, :max_ver_tokens]
 
-                output = self.model(
-                    input_ids=mb_ver_query_response,
-                    attention_mask=mb_ver_query_response_mask,
-                    return_dict=True,
-                )
+                    output = self.model(
+                        input_ids=mb_ver_query_response,
+                        attention_mask=mb_ver_query_response_mask,
+                        return_dict=True,
+                    )
 
-                mb_v_logprobs = get_shifted_logprobs(
-                    output.logits,
-                    mb_ver_query_response,
-                    mb_ver_response_mask,
-                    temperature=self.temperature,
-                )
-                mb_v_label_mask = mb_ver_response_mask[:, 1:]
+                    mb_v_logprobs = get_shifted_logprobs(
+                        output.logits,
+                        mb_ver_query_response,
+                        mb_ver_response_mask,
+                        temperature=self.temperature,
+                    )
+                    mb_v_label_mask = mb_ver_response_mask[:, 1:]
 
-                reinforce_loss = -mb_v_logprobs
-                reinforce_loss = masked_mean(
-                    reinforce_loss, mb_v_label_mask, axis=1
-                ).mean()
-                self.stats.accumulate("verifier_loss", reinforce_loss.item())
-                pg_loss += reinforce_loss
+                    reinforce_loss = -mb_v_logprobs
+                    reinforce_loss = masked_mean(
+                        reinforce_loss, mb_v_label_mask, axis=1
+                    ).mean()
+                    self.stats.accumulate("verifier_loss", reinforce_loss.item())
+                    pg_loss += reinforce_loss
 
             self.stats.accumulate(
                 "entropy",

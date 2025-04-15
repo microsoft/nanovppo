@@ -310,10 +310,11 @@ def train(local_rank, world_size, args):
         ddp_state.print("Beginning updating the policy")
         ddp_state.print("Length of the dataset:", len(epoch_dataset))
 
-        torch.save(
-            episode_data,
-            f"{args.o}/episode_data_{ddp_state.local_process_index}_{global_epoch}.pt",
-        )
+        if args.savedata:
+            torch.save(
+                episode_data,
+                f"{args.o}/episode_data_{ddp_state.local_process_index}_{global_epoch}.pt",
+            )
 
         # offline steps
         train_iterator = iter(dataloader)
@@ -462,6 +463,7 @@ if __name__ == "__main__":
     parser.add_argument("-m", type=str, help="Model name")
     parser.add_argument("-o", type=str, help="Output directory")
     parser.add_argument("-s", type=int, help="Seed", default=42)
+    parser.add_argument("--savedata", type=int, help="save data at each epoch", default=0)
     parser.add_argument("-a", type=str, help="Algorithm")
     parser.add_argument("--lr", type=float, help="Learning rate", default=1e-5)
     parser.add_argument("--template", default="cot", help="Template type COT/LCOT")
