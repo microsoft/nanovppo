@@ -4,7 +4,8 @@ nanovvpo is a minimal codebase to reproduce RL algorithms for LLMs such as GRPO,
 
 This is a training curve obtained by `scripts/grpo_cd_3b.sh` and generated with `miniplot.py` for GRPO training on Countdown 3to4 (from Jiayi) for Qwen-2.5-3B-Instruct.
 
-![image](https://github.com/user-attachments/assets/0eea0b54-9725-421d-894a-cb808976f09b)
+<img width="1026" alt="image" src="https://github.com/user-attachments/assets/699fb8b1-d370-4511-8ed9-018b2078a3ac" />
+
 
 
 ## What Can It Do
