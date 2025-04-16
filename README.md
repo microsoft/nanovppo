@@ -1,4 +1,4 @@
-<img width="626" alt="image" src="https://github.com/user-attachments/assets/4401d2df-8e7d-437c-a85d-b6acdb2e9b81" /># Overview
+# Overview
 
 nanovvpo is a minimal codebase to reproduce RL algorithms for LLMs such as GRPO, VPPO and RFT.
 
