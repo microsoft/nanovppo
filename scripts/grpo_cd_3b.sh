@@ -1,9 +1,7 @@
-export TRAIN_PROCS=1
-
 DIR="./runs_outputs"
 NAME="grpo_cd_3b"
 
-torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
+python run_torch.py \
     -m q3i \
     -o ${DIR}/${NAME}_42 \
     -t 1.0 \
