@@ -451,7 +451,7 @@ def train(local_rank, world_size, args):
         ddp_state.wait_for_everyone()
 
     if ddp_state.local_process_index == 0:
-        generator.shutdown()
+        GeneratorClient.get().shutdown()
     ddp_state.wait_for_everyone()
 
 
