@@ -32,7 +32,7 @@ nanovppo is not well suited for training large scale models.
 
 ## Get Started
 
-To begin using nanovppo, just look at scripts/*.sh in the codebase for an example on how to train a model. You will need at least 2 gpus (one for inference, one for training).
+To begin using nanovppo, just look at scripts/*.sh in the codebase for an example on how to train a model. With SGL you will need at least 2 gpus (one for inference, one for training).
 
 ## Evaluation
 
