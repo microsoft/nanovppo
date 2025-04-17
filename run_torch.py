@@ -30,6 +30,7 @@ from dataset.math_utils import (
     prepare_math_dataset,
 )
 from algos.rft import RFT
+from algos.grm import GenRM
 from algos.grpo import GRPO
 from dataset.data_utils import (
     MultiTensorDataset,
@@ -73,6 +74,7 @@ algos = {
     "grpo": GRPO,
     "vppo": VPPO,
     "tpo": TPO,
+    "genrm": GenRM,
 }
 
 
@@ -272,11 +274,17 @@ def train(local_rank, world_size, args):
         labels_batch = [all_labels[i] for i in sample_indices]
 
         if not args.fast and global_step == 0:
+            if hasattr(algo, "modify_eval_queries"):
+                test_queries_ = algo.modify_eval_queries(test_queries)
+                train_queries_ = algo.modify_eval_queries(train_queries)
+            else:
+                test_queries_ = test_queries
+                train_queries_ = train_queries
             acc_math = np.mean(
-                eval_dataset(test_queries, test_labels, temperature=0.35, top_p=0.9)
+                eval_dataset(test_queries_, test_labels, temperature=0.35, top_p=0.9)
             )
             tracc_math = np.mean(
-                eval_dataset(train_queries, train_labels, temperature=0.35, top_p=0.9)
+                eval_dataset(train_queries_, train_labels, temperature=0.35, top_p=0.9)
             )
 
             if ddp_state.is_main_process:
@@ -386,11 +394,19 @@ def train(local_rank, world_size, args):
             # sleep if possible (VLLM)
             GeneratorClient.get().wake_up()
 
+            # modify queries by injecting prompts if needed
+            if hasattr(algo, "modify_eval_queries"):
+                test_queries_ = algo.modify_eval_queries(test_queries)
+                train_queries_ = algo.modify_eval_queries(train_queries)
+            else:
+                test_queries_ = test_queries
+                train_queries_ = train_queries
+
             acc_math = np.mean(
-                eval_dataset(test_queries, test_labels, temperature=0.35, top_p=0.9)
+                eval_dataset(test_queries_, test_labels, temperature=0.35, top_p=0.9)
             )
             tracc_math = np.mean(
-                eval_dataset(train_queries, train_labels, temperature=0.35, top_p=0.9)
+                eval_dataset(train_queries_, train_labels, temperature=0.35, top_p=0.9)
             )
             eval_step = False
             epoch_stats.accumulate("test_accuracy", acc_math)
@@ -454,7 +470,7 @@ def train(local_rank, world_size, args):
         ddp_state.wait_for_everyone()
 
     if ddp_state.local_process_index == 0:
-        generator.shutdown()
+        GeneratorClient.get().shutdown()
     ddp_state.wait_for_everyone()
 
 
