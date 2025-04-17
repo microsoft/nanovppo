@@ -45,21 +45,9 @@ Your task is to determine whether every step of the solution is correct and usef
 Format your answer as a list of scores (from 0 to 5), 0 being the worst and 5 being the best, where each score corresponds to a step of the solution.
 Think about your answer between <think> and </think> and then write the scores down for every step between <answer> and </answer>.
 
-e.g.:
+e.g. if there are 3 steps in the solution, your answer should look like this:
 
-Step 1:
-...
-
-Step 2:
-...
-
-Step 3:
-...
-
-<think>
-...
-</think>
-<answer>[3, 4, 1]</answer>
+<answer>[score step 1, score step 2, score step 3]</answer>
 """
 
 VERIFIER_TEMPLATE_ASS = "<think>"
@@ -137,7 +125,7 @@ class GenRM(Algo):
                     # Extract the list of scores
                     if answer_text.startswith("[") and answer_text.endswith("]"):
                         scores_text = answer_text[1:-1]
-                        scores = [float(s.strip()) / 5 for s in scores_text.split(",")]
+                        scores = [np.clip(float(s.strip()), 0, 5) / 5 for s in scores_text.split(",")]
                         # Verify if the number of scores matches the number of chunks
                         if len(scores) == len(response_chunks[i]):
                             parsed_scores = scores
@@ -191,7 +179,7 @@ class GenRM(Algo):
             user_message = messages[i][-1]["content"]
             assistant_message = responses[i]
             chunks_ = [
-                "Step {i}:\n{chunk}".format(i=j + 1, chunk=chunk)
+                "Step {i}:\n{chunk}\nEND OF STEP".format(i=j + 1, chunk=chunk)
                 for j, chunk in enumerate(responses_steps[i])
             ]
             assistant_message = "\n\n".join(chunks_)
@@ -225,13 +213,17 @@ class GenRM(Algo):
 
         RequestUtils.populate(evaluation_requests, rewards, "reward")
 
-        genrm_step_rewards, is_format_correct = self.extract_genrm_scores(
+        genrm_step_rewards, genrm_is_format_correct = self.extract_genrm_scores(
             responses_steps, genrm_responses
         )
 
+        genrm_corr_rewards = [
+            (1. - np.abs(np.mean(s) - float(r) / 2.))
+            for s, r in zip(genrm_step_rewards, rewards)
+        ]
         genrm_rewards = [
-            float(f) + float(f) * (2 - np.abs(np.clip(np.mean(s), 0, 1) - r))
-            for s, f, r in zip(genrm_step_rewards, is_format_correct, rewards)
+            float(f) + float(f) * r
+            for f, r in zip(genrm_is_format_correct, genrm_corr_rewards)
         ]
 
         step_rewards = [
@@ -264,14 +256,21 @@ class GenRM(Algo):
 
         self.stats.accumulate("avg_reward", avg_reward)
         self.stats.accumulate("genrm_reward", np.mean(genrm_rewards))
+        self.stats.accumulate("genrm_corr_reward", np.mean(genrm_corr_rewards))
+        self.stats.accumulate("genrm_format_reward", np.mean(genrm_is_format_correct))
 
         ddp_state.print("====================================")
         ddp_state.print("Problem: ", evaluation_requests[0].messages[-1]["content"])
         ddp_state.print("Answer: ", evaluation_requests[0].response)
+        ddp_state.print("GenRM: ", genrm_responses[0])
         ddp_state.print("Reward: ", evaluation_requests[0].reward)
+        ddp_state.print("GenRM Scores: ", genrm_step_rewards[0])
+        ddp_state.print("GenRM Valid: ", genrm_is_format_correct[0])
 
         ddp_state.print("====================================")
         ddp_state.print("Average reward:", avg_reward)
+        ddp_state.print("Average GenRM corr. reward:", np.mean(genrm_corr_rewards))
+        ddp_state.print("Average GenRM syn. reward:", np.mean(genrm_is_format_correct))
         ddp_state.print(
             "Reward distribution:",
             print_metrics(
