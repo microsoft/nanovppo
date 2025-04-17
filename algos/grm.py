@@ -291,7 +291,7 @@ class GenRM(Algo):
         )
 
         genrm_rewards = [
-            float(f) - float(f) * (np.mean(s) - r) ** 2
+            float(f) + float(f) * (2 - np.abs(np.clip(np.mean(s), 0, 1) - r))
             for s, f, r in zip(genrm_step_rewards, is_format_correct, rewards)
         ]
 
