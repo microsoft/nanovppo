@@ -334,7 +334,10 @@ def train(local_rank, world_size, args):
             algo.model.train()
             optimizer.zero_grad()
             train_iterator = iter(dataloader)
-            off_sampler.set_epoch(off_epoch)
+
+            if isinstance(off_sampler, torch.utils.data.DistributedSampler):
+                off_sampler.set_epoch(off_epoch)
+
             acc_steps = off_batch_size if off_batch_size > 0 else len(dataloader)
 
             for micro_step, batch in enumerate(

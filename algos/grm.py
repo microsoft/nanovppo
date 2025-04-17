@@ -241,16 +241,16 @@ class GenRM(Algo):
             for j, s in enumerate(step_rewards[i : i + self.k]):
                 step_advantages.append([(s_val - avg) / std for s_val in s])
 
-        genrm_rewards = np.array(genrm_rewards)
-        genrm_rewards = genrm_rewards.reshape(-1, self.k)
-        genrm_rewards = genrm_rewards - genrm_rewards.mean(axis=1, keepdims=True)
-        genrm_rewards = genrm_rewards / (
-            genrm_rewards.std(axis=1, keepdims=True) + 1e-8
+        genrm_advantages = np.array(genrm_rewards)
+        genrm_advantages = genrm_advantages.reshape(-1, self.k)
+        genrm_advantages = genrm_advantages - genrm_advantages.mean(axis=1, keepdims=True)
+        genrm_advantages = genrm_advantages / (
+            genrm_advantages.std(axis=1, keepdims=True) + 1e-8
         )
-        genrm_rewards = genrm_rewards.reshape(-1).tolist()
+        genrm_advantages = genrm_advantages.reshape(-1).tolist()
 
         genrm_response_indices = [[len(r)] for r in genrm_responses]
-        genrm_advantages = [[r] for r in genrm_rewards]
+        genrm_advantages = [[r] for r in genrm_advantages]
 
         max_reward, avg_reward = RequestUtils.gather_max_avg_reward(evaluation_requests)
 
