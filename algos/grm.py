@@ -114,67 +114,6 @@ class GenRM(Algo):
         self.max_tokens = max_tokens
         self.stats = AccumulatorDict()
 
-    def build_tensors_for_criterion_verifier(
-        self,
-        tokenizer,
-        verifier_messages,
-        verifier_answers,
-        num_examples_in_batch,
-    ):
-        ver_query_response, ver_query_response_mask, ver_response_mask = (
-            create_joint_tensors(
-                self.tokenizer,
-                verifier_messages,
-                verifier_answers,
-                is_final=[1] * len(verifier_messages),
-            )
-        )
-        if num_examples_in_batch - len(ver_query_response) > 0:
-            ver_query_response = torch.cat(
-                [
-                    ver_query_response,
-                    torch.zeros(
-                        num_examples_in_batch - len(ver_query_response),
-                        ver_query_response.shape[1],
-                        dtype=torch.long,
-                    ),
-                ],
-                dim=0,
-            )
-            ver_query_response_mask = torch.cat(
-                [
-                    ver_query_response_mask,
-                    torch.zeros(
-                        num_examples_in_batch - len(ver_query_response_mask),
-                        ver_query_response_mask.shape[1],
-                        dtype=ver_query_response_mask.dtype,
-                    ),
-                ],
-                dim=0,
-            )
-            ver_response_mask = torch.cat(
-                [
-                    ver_response_mask,
-                    torch.zeros(
-                        num_examples_in_batch - len(ver_response_mask),
-                        ver_response_mask.shape[1],
-                        dtype=ver_response_mask.dtype,
-                    ),
-                ],
-                dim=0,
-            )
-        else:
-            # cut the tensors to the maximum length
-            ver_query_response = ver_query_response[:num_examples_in_batch]
-            ver_query_response_mask = ver_query_response_mask[:num_examples_in_batch]
-            ver_response_mask = ver_response_mask[:num_examples_in_batch]
-
-        return (
-            ver_query_response,
-            ver_query_response_mask,
-            ver_response_mask,
-        )
-
     def extract_genrm_scores(
         self,
         response_chunks,
