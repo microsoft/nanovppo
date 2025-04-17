@@ -76,7 +76,7 @@ def init_ddp(local_rank=0, world_size=1):
     import os
 
     if "LOCAL_RANK" not in os.environ:
-        pass
+        return
 
     if "MASTER_ADDR" not in os.environ:
         os.environ["MASTER_ADDR"] = "localhost"
