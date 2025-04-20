@@ -38,9 +38,11 @@ from algos.vppo import (
 )
 
 
-VERIFIER_TEMPLATE = """Read the following problem and solution chunked in steps.
-Your task is to rate each step’s correctness and usefulness.
-Return a JSON list of integers in the range 0‑5, one per step.
+VERIFIER_SYSTEM_MESSAGE = "You are a helpful assistant. Think about the usefulness of each step in the solution."
+
+
+VERIFIER_TEMPLATE = """
+Here is a problem and a solution chunked in steps.
 
 Problem:
 {problem}
@@ -48,88 +50,63 @@ Problem:
 Solution:
 {step_solution}
 
-Think through the evaluation between <think> and </think>.
-Put only the list of scores between <scores> and </scores>.
+Your task is to determine whether every step of the solution is correct and useful to solve the problem.
+Format your answer as a list of scores (from 0 to 5), 0 being the worst and 5 being the best, where each score corresponds to a step of the solution.
+Think about your scores between <think> and </think> and then write the scores down for every step between <answer> and </answer>.
 
-E.g. if there are 3 steps in the solution, your answer should look like this:
+e.g. if there are 3 steps in the solution, your answer should look like this:
 
-<think>your thinking here</think>
-<scores>[score step 1, score step 2, score step 3]</scores>
+<answer>[score step 1, score step 2, score step 3]</answer>
 """
 
-
-VERIFIER_TEMPLATE_2 = """Here is a problem and a partial solution chunked in steps. Your task is to determine whether the last step of the solution is correct and useful to solve the problem.
-
-Problem:
-{problem}
-
-Solution:
-{step_solution}
-
-Format your answer as a single score (from 0 to 5), 0 being the worst and 5 being the best, where the score correspond to the quality last step of the solution.
-Think about your answer between <think> and </think> and then write the score down for the last step between <answer> and </answer>.
-"""
 
 VERIFIER_TEMPLATE_ASS = "<think>"
 
 
-def genrm_format_reward(completion: str, num_expected_scores: int) -> float:
-    """
-    Format: <think>...</think><scores>...</scores>
+def extract_genrm_scores(
+    response_chunks: List[List[str]],
+    response_rewards: List[float],
+    genrm_responses: List[str],
+):
+    # Parse verifier responses to extract scores
+    step_rewards = []
+    format_rewards = []
+    correctness_rewards = []
+    for i, response in enumerate(genrm_responses):
+        response = "<think>" + response
+        format_correct = False
+        parsed_scores = [0.0] * len(response_chunks[i])
+        try:
+            answer_start = response.rfind("<answer>")
+            answer_end = response.rfind("</answer>")
+            if answer_start != -1:
+                if answer_end == -1:
+                    answer_end = len(response)
+                answer_text = response[
+                    answer_start + len("<answer>") : answer_end
+                ].strip()
+                # Extract the list of scores
+                if answer_text.startswith("[") and answer_text.endswith("]"):
+                    scores_text = answer_text[1:-1]
+                    scores = [
+                        np.clip(float(s.strip()), 0, 5) / 5
+                        for s in scores_text.split(",")
+                    ]
+                    # Verify if the number of scores matches the number of chunks
+                    if len(scores) == len(response_chunks[i]):
+                        parsed_scores = scores
+                        format_correct = True
+        except Exception:
+            pass
 
-    Returns:
-        float: Reward score
-    """
-    try:
-        regex = r"^<think>([^<]*(?:<(?!/?think>)[^<]*)*)<\/think>\n<scores>([\s\S]*?)<\/scores>$"
-        match = re.search(regex, completion, re.DOTALL)
+        format_rewards.append(format_correct)
+        correctness_rewards.append(
+            format_correct
+            * (1.0 - np.abs(np.mean(parsed_scores) - float(response_rewards[i]) / 2))
+        )
+        step_rewards.append(parsed_scores)
 
-        if match is None or len(match.groups()) != 2:
-            # Format is incorrect
-            return 0.0
-        else:
-            # Extract the content inside <scores>...</scores>
-            try:
-                answer = ast.literal_eval(match.group(2).strip())
-                # Must be a list …
-                if not isinstance(answer, list):
-                    return 0.5
-
-                if not all(isinstance(x, (int, float)) for x in answer):
-                    return 0.5
-
-                if not len(answer) == num_expected_scores:
-                    return 0.5
-            except:
-                # If it doesn't match, reward is 0.5
-                return 0.5    
-        return 1.0
-    except Exception:
-        # Any error leads to 0 reward
-        return 0.0
-
-
-def genrm_extract_answer(completion: str):
-    parts = completion.split("<scores>")
-    if len(parts) < 2:
-        return None
-    last_part = parts[-1]
-
-    if "</scores>" not in last_part:
-        return None
-    answer = last_part.split("</scores>")[0].strip()
-
-    try:
-        answer = ast.literal_eval(answer)
-        # Must be a list …
-        if not isinstance(answer, list):
-            return None
-        # … and every element must be numeric
-        if not all(isinstance(x, (int, float)) for x in answer):
-            return None
-    except Exception:
-        return None
-    return answer
+    return step_rewards, format_rewards, correctness_rewards
 
 
 class GenRM(Algo):
@@ -187,40 +164,6 @@ class GenRM(Algo):
         self.max_tokens = max_tokens
         self.stats = AccumulatorDict()
 
-    def extract_genrm_scores(
-        self,
-        response_chunks: List[List[str]],
-        response_rewards: List[float],
-        genrm_responses: List[str],
-    ):
-        # Parse verifier responses to extract scores
-        step_rewards = []
-        format_rewards = []
-        correctness_rewards = []
-        for i, response in enumerate(genrm_responses):
-            # append the first <think> which has been teacher forced
-            response = "<think>" + response
-            format_reward = genrm_format_reward(
-                response, num_expected_scores=len(response_chunks[i])
-            )
-            answer = genrm_extract_answer(response)
-
-            if not answer or len(answer) != len(response_chunks[i]):
-                # correctness reward is 0 if we couldn't parse the answer
-                answer = [0.0] * len(response_chunks[i])
-                corr_reward = 0
-            else:
-                answer = [np.clip(float(s), 0, 5) / 5 for s in answer]
-                corr_reward = 1.0 - np.abs(
-                    np.mean(answer) - float(response_rewards[i]) / 2.0
-                )
-
-            step_rewards.append(answer)
-            format_rewards.append(format_reward)
-            correctness_rewards.append(corr_reward)
-
-        return step_rewards, format_rewards, correctness_rewards
-
     @torch.no_grad
     def gather_episodes(self, messages, labels):
         engine = GeneratorClient.get()
@@ -265,8 +208,9 @@ class GenRM(Algo):
 
         # now create genrm messages
         genrm_messages = []
-        responses_steps, responses_indices = vppo_treetune_chunk(
-            responses, max_chunks=6, merge_every_n_chunk=2
+        responses_steps, responses_indices = vppo_balanced_chunk(
+            responses,
+            max_chunks=6,
         )
 
         for i in range(len(messages)):
@@ -279,8 +223,9 @@ class GenRM(Algo):
             assistant_message = "\n\n".join(chunks_)
             genrm_messages.append(
                 [
+                    {"role": "system", "content": VERIFIER_SYSTEM_MESSAGE},
                     {
-                        "role": "system",
+                        "role": "user",
                         "content": VERIFIER_TEMPLATE.format(
                             problem=user_message, step_solution=assistant_message
                         ),
@@ -299,7 +244,7 @@ class GenRM(Algo):
         genrm_responses = flatten(genrm_responses)
 
         genrm_step_rewards, genrm_format_rewards, genrm_corr_rewards = (
-            self.extract_genrm_scores(
+            extract_genrm_scores(
                 responses_steps,
                 rewards,
                 genrm_responses,
@@ -307,7 +252,7 @@ class GenRM(Algo):
         )
 
         genrm_rewards = [
-            float(f) + float(f) * r
+            float(f) + r
             for f, r in zip(genrm_format_rewards, genrm_corr_rewards)
         ]  # between 0 and 2
 
@@ -315,16 +260,18 @@ class GenRM(Algo):
             [step_reward + seq_reward for step_reward in step_rewards]
             for step_rewards, seq_reward in zip(genrm_step_rewards, rewards)
         ]
-
-        # Compute per‑query, z‑scored advantages
         step_advantages = []
+        # Compute per‑query, z‑scored advantages
         for i in range(0, len(step_rewards), self.k):
-            block = step_rewards[i : i + self.k]  # k responses of one query
-            flat = np.concatenate(block)
-            mean, std = flat.mean(), flat.std() + 1e-8  # avoid div‑by‑zero
-            step_advantages.extend(
-                [((np.array(r) - mean) / std).tolist() for r in block]
-            )
+            fi = []
+            for s in step_rewards[i : i + self.k]:
+                fi.extend(s)
+
+            fi = np.array(fi)
+            avg = np.mean(fi)
+            std = np.std(fi) + 1e-8
+            for j, s in enumerate(step_rewards[i : i + self.k]):
+                step_advantages.append([(s_val - avg) / std for s_val in s])
 
         genrm_advantages = np.array(genrm_rewards)
         genrm_advantages = genrm_advantages.reshape(-1, self.k)
