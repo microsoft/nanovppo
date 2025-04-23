@@ -31,7 +31,8 @@ class DDPState:
     process_index: int = 0
 
     def wait_for_everyone(self):
-        torch.distributed.barrier()
+        if self.num_processes > 1:
+            torch.distributed.barrier()
 
     def on_main_process(self, function):
         if self.is_main_process:
