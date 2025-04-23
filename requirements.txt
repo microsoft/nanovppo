@@ -2,3 +2,5 @@ sglang[all]
 torch==2.5.1
 transformers==4.48.2
 numpy
+vllm=0.7.4
+bitsandbytes
