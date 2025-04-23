@@ -356,9 +356,9 @@ class PAPO(Algo):
             pg_losses2 = -mb_advantage * torch.clamp(ratio, 0.9, 1.1)
             pg_losses = torch.max(pg_losses1, pg_losses2)
 
-            pg_losses = pg_losses * mb_is_guess.unsqueeze(1) + (
+            pg_losses = pg_losses * ~mb_is_guess.unsqueeze(1) + (
                 -mb_advantage * mb_logprobs
-            ) * (1 - mb_is_guess.unsqueeze(1))
+            ) * (mb_is_guess.unsqueeze(1))
 
             labels_mask = mb_response_mask[:, 1:]
             per_token_kl = (
