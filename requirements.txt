@@ -1,6 +1,8 @@
-sglang[all]
+sglang==0.4.4.post4
+transformers==4.48.0
 torch==2.5.1
 transformers==4.48.2
+vllm==0.7.3
 numpy
-vllm=0.8.4
-bitsandbytes
+bitsandbytes==0.43.3
+datasets==3.0.1
