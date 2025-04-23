@@ -57,9 +57,6 @@ class VLLMGeneratorClient:
     def wake_up(self):
         self.llm.wake_up()
 
-    def shutdown(self):
-        pass
-
     @classmethod
     def get(cls):
         assert cls._instance is not None, "VLLMGeneratorClient not initialized"
