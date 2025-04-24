@@ -118,6 +118,10 @@ def rank_zero_only(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        if not ddp_state.ddp:
+            result = func(*args, **kwargs)
+            return result
+
         if ddp_state.is_main_process:
             # Execute the function on the master process
             result = func(*args, **kwargs)
