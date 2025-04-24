@@ -146,6 +146,9 @@ def rank_zero_only(func):
 
 
 def gather_and_concatenate(data, dim=0):
+    if not ddp_state.ddp:
+        return data
+
     world_size = ddp_state.num_processes
 
     gathered_data = []
