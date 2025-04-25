@@ -1,5 +1,4 @@
 sglang==0.4.4.post4
-transformers==4.48.0
 torch==2.5.1
 transformers==4.48.2
 vllm==0.7.3
