@@ -1,5 +1,5 @@
 sglang==0.4.4.post4
-torch==2.5.1
+torch==2.7.0
 flash_attn
 accelerate
 transformers==4.48.2
