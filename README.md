@@ -2,6 +2,12 @@
 
 nanovvpo is a minimal codebase to reproduce RL algorithms for LLMs such as GRPO, VPPO and RFT.
 
+This is a training curve obtained by `scripts/grpo_cd_3b.sh` and generated with `miniplot.py` for GRPO training on Countdown 3to4 (from Jiayi) for Qwen-2.5-3B-Instruct (single A100-40GB gpu).
+
+<img width="1026" alt="image" src="https://github.com/user-attachments/assets/699fb8b1-d370-4511-8ed9-018b2078a3ac" />
+
+
+
 ## What Can It Do
 
 nanovppo was developed as an educational tool for experiments with RL for LLMs. It represents a self-contained, dependency-lean codebase that reimplements existing well-known algorithms such as: 
@@ -26,7 +32,7 @@ nanovppo is not well suited for training large scale models.
 
 ## Get Started
 
-To begin using nanovppo, just look at scripts/*.sh in the codebase for an example on how to train a model. You will need at least 2 gpus (one for inference, one for training).
+To begin using nanovppo, just look at scripts/*.sh in the codebase for an example on how to train a model. With SGL you will need at least 2 gpus (one for inference, one for training).
 
 ## Evaluation
 

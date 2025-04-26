@@ -163,11 +163,16 @@ def train(local_rank, world_size, args):
     )
     if args.gcheck:
         algo.model.gradient_checkpointing_enable()
-    algo.model = DDP(
-        algo.model,
-        device_ids=[ddp_state.local_process_index],
-        output_device=ddp_state.local_process_index,
-    )
+
+    if ddp_state.ddp:
+        algo.model = DDP(
+            algo.model,
+            device_ids=[ddp_state.local_process_index],
+            output_device=ddp_state.local_process_index,
+        )
+        algo_module = algo.model.module
+    else:
+        algo_module = algo.model
 
     decay_parameters = get_parameter_names(algo.model, [torch.nn.LayerNorm])
     decay_parameters = [name for name in decay_parameters if "bias" not in name]
@@ -227,7 +232,7 @@ def train(local_rank, world_size, args):
         raise ValueError("Unknown scheduler.")
 
     if args.ema > 0.0:
-        ema_params = copy_model_param(algo.model.module)
+        ema_params = copy_model_param(algo_module)
 
     ddp_state.print("Scheduler set! Total steps:", total_steps)
 
@@ -334,10 +339,8 @@ def train(local_rank, world_size, args):
             algo.model.train()
             optimizer.zero_grad()
             train_iterator = iter(dataloader)
-
             if isinstance(off_sampler, torch.utils.data.DistributedSampler):
                 off_sampler.set_epoch(off_epoch)
-
             acc_steps = off_batch_size if off_batch_size > 0 else len(dataloader)
 
             for micro_step, batch in enumerate(
@@ -375,7 +378,7 @@ def train(local_rank, world_size, args):
                     global_step += 1
 
             if args.ema:
-                param_ema(ema_params, algo.model.module, args.ema)
+                param_ema(ema_params, algo_module, args.ema)
 
             ddp_state.print(
                 f"Epoch: {global_epoch}, Off Epoch: {off_epoch}, "
@@ -462,7 +465,7 @@ def train(local_rank, world_size, args):
 
             # save best model
             if acc_math > best_acc:
-                algo.model.module.save_pretrained(f"{args.o}/model")
+                algo_module.save_pretrained(f"{args.o}/model")
                 algo.tokenizer.save_pretrained(f"{args.o}/model")
                 best_acc = acc_math
                 print("Best model saved!")

@@ -45,6 +45,7 @@ class VLLMGeneratorClient:
             gpu_memory_utilization=0.2,
             tensor_parallel_size=1,
             enable_prefix_caching=True,
+            max_model_len=15616,
             swap_space=1,
             scheduling_policy="fcfs",
             dtype=torch.bfloat16,
@@ -56,9 +57,6 @@ class VLLMGeneratorClient:
 
     def wake_up(self):
         self.llm.wake_up()
-
-    def shutdown(self):
-        pass
 
     @classmethod
     def get(cls):

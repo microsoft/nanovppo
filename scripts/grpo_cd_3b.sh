@@ -1,15 +1,7 @@
-# This will use 2 GPUs total: 1 process to train the model + 1 SGL GPU to do online inferencing
-
-# TRAIN_PROCS=1    : num training processes
-# SGL_BASE_GPU_ID=1: puts SGL server in GPU 1
-# SGL_DP_SIZE=1    : means that SGL will use 1 GPU
-
-export TRAIN_PROCS=1
-
 DIR="/data/alsordon/runs_outputs"
-NAME="grpo_cd"
+NAME="grpo_cd_3b"
 
-torchrun --nproc-per-node=${TRAIN_PROCS} run_torch.py \
+python run_torch.py \
     -m q3i \
     -o ${DIR}/${NAME}_42 \
     -t 1.0 \

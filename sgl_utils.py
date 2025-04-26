@@ -9,12 +9,10 @@ import subprocess
 from functools import partial
 from typing import List, Optional
 
-import docker
 import psutil
 import requests
 import torch
 import tqdm
-from docker.errors import APIError, NotFound
 from transformers import AutoTokenizer
 from vllm.worker.worker import Worker
 

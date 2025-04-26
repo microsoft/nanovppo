@@ -1,8 +1,4 @@
-# This will use 2 GPUs total: 1 process to train the model + 1 SGL GPU to do online inferencing
-
 # TRAIN_PROCS=1    : num training processes
-# SGL_BASE_GPU_ID=1: puts SGL server in GPU 1
-# SGL_DP_SIZE=1    : means that SGL will use 1 GPU
 
 export TRAIN_PROCS=1
 

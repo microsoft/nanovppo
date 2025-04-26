@@ -31,7 +31,8 @@ class DDPState:
     process_index: int = 0
 
     def wait_for_everyone(self):
-        torch.distributed.barrier()
+        if self.num_processes > 1:
+            torch.distributed.barrier()
 
     def on_main_process(self, function):
         if self.is_main_process:
@@ -117,6 +118,10 @@ def rank_zero_only(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        if not ddp_state.ddp:
+            result = func(*args, **kwargs)
+            return result
+
         if ddp_state.is_main_process:
             # Execute the function on the master process
             result = func(*args, **kwargs)
@@ -141,6 +146,9 @@ def rank_zero_only(func):
 
 
 def gather_and_concatenate(data, dim=0):
+    if not ddp_state.ddp:
+        return data
+
     world_size = ddp_state.num_processes
 
     gathered_data = []
