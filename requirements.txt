@@ -3,7 +3,7 @@ torch==2.5.1
 flash_attn
 accelerate
 transformers==4.48.2
-vllm==0.7.3
+vllm==0.8.4
 numpy
 bitsandbytes==0.43.3
 datasets==3.0.1
