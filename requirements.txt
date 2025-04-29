@@ -2,7 +2,7 @@ sglang==0.4.4.post4
 torch==2.5.1
 flash_attn
 accelerate
-transformers==4.48.2
+transformers==4.50.0
 vllm==0.7.3
 numpy
 bitsandbytes==0.43.3
