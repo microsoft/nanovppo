@@ -52,23 +52,20 @@ Solution:
 Which model wrote the solution? Just write the model number (1, 2, 3, 4).
 """
 
-MODEL_SYSTEM_TEMPLATE = """IMPORTANT: You are model {model_number} out of {total_models} models."""
+MODEL_SYSTEM_TEMPLATE = """IMPORTANT: You are model {model_number} out of {total_models} models. Every model should embody a different strategy to reason about the particular problem at hand. Remember, you are model {model_number}/{total_models}."""
 
 
-class PAPO(Algo):
+class GRPOD(Algo):
     @classmethod
     def add_parser_args(self, parser):
         parser.add_argument(
             "--kl_ctl", type=float, default=0.0001, help="KL term control"
         )
         parser.add_argument(
-            "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
+            "--guess_ctl", type=float, default=0.1, help="Guess term control"
         )
         parser.add_argument(
-            "--inference",
-            type=int,
-            default=0,
-            help="If 0, infer all together, if 1 infer independently.",
+            "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
         )
         parser.add_argument("--drgrpo", type=int, default=0, help="If 1, use DrGRPO")
         return parser
@@ -102,6 +99,7 @@ class PAPO(Algo):
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.k = k
+        self.guess_ctl = algo_kwargs["guess_ctl"]
         self.kl_ctl = algo_kwargs["kl_ctl"]
         self.kl_max = algo_kwargs["kl_max"]
         self.drgpo = algo_kwargs["drgrpo"]
@@ -224,7 +222,7 @@ class PAPO(Algo):
         # oracle responses, train the verifier with SFT!
         guess_responses = [str((i % self.k) + 1) for i in range(len(guess_responses))]
 
-        rewards = (np.asarray(rewards) + 0.5 * np.asarray(guess_rewards)).reshape(-1, self.k)
+        rewards = (np.asarray(rewards) + self.guess_ctl * np.asarray(guess_rewards)).reshape(-1, self.k)
         advantages = (rewards - rewards.mean(axis=1, keepdims=True))
         if not self.drgpo:
             advantages = advantages / (
@@ -274,7 +272,6 @@ class PAPO(Algo):
         )
 
         # probabilities under the reference policy
-        # self.ref_model.to(self.model.device)
         ref_logprobs = get_logprobs(
             self.ref_model,
             query_response,
@@ -283,7 +280,6 @@ class PAPO(Algo):
             temperature=self.temperature,
             reduction="none",
         )
-        # self.ref_model.to("cpu")
         torch.cuda.empty_cache()
 
         # probabilities under the sampling policy
@@ -352,12 +348,12 @@ class PAPO(Algo):
             log_ratio = mb_logprobs - mb_old_logprobs
             ratio = torch.exp(log_ratio)
 
-            pg_losses1 = -mb_advantage * ratio
-            pg_losses2 = -mb_advantage * torch.clamp(ratio, 0.9, 1.1)
-            pg_losses = torch.max(pg_losses1, pg_losses2)
+            pg_losses1 = mb_advantage.unsqueeze(1) * ratio
+            pg_losses2 = mb_advantage.unsqueeze(1) * torch.clamp(ratio, 0.9, 1.1)
+            pg_losses = -torch.min(pg_losses1, pg_losses2)
 
             pg_losses = pg_losses * ~mb_is_guess.unsqueeze(1) + (
-                -mb_advantage * mb_logprobs
+                -mb_advantage.unsqueeze(1) * mb_logprobs
             ) * (mb_is_guess.unsqueeze(1))
 
             labels_mask = mb_response_mask[:, 1:]
@@ -366,8 +362,12 @@ class PAPO(Algo):
                 - (mb_ref_logprobs - mb_logprobs)
                 - 1
             )
+            per_token_kl = torch.clamp(
+                per_token_kl,
+                max=self.kl_max,
+            )
 
-            per_token_loss = pg_losses + self.kl_ctl * per_token_kl * mb_is_guess.unsqueeze(1)
+            per_token_loss = pg_losses + self.kl_ctl * per_token_kl * ~mb_is_guess.unsqueeze(1)
             pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
 
             del output

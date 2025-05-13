@@ -45,6 +45,14 @@ def masked_mean(values, mask, axis=None):
         return (values * mask).sum() / mask.sum()
 
 
+def masked_sum(values, mask, axis=None):
+    """Compute mean of tensor with a masked values."""
+    if axis is not None:
+        return (values * mask).sum(axis=axis)
+    else:
+        return (values * mask).sum()
+
+
 def masked_var(values, mask, unbiased=True):
     """Compute variance of tensor with masked values."""
     mean = masked_mean(values, mask)

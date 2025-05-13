@@ -14,6 +14,7 @@ from utils import (
     get_logprobs,
     get_shifted_logprobs,
     masked_mean,
+    masked_sum,
     masked_whiten,
     print_metrics,
     repeat,
@@ -35,6 +36,9 @@ class GRPO(Algo):
         )
         parser.add_argument(
             "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
+        )
+        parser.add_argument(
+            "--rpp", type=int, default=0, help="If 1, use Reinforce++"
         )
         parser.add_argument(
             "--drgrpo", type=int, default=0, help="If 1, use DrGRPO"
@@ -64,7 +68,7 @@ class GRPO(Algo):
             device_map=device
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
+            model_name + "-Instruct" if "-Instruct" not in model_name else model_name,
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -73,6 +77,7 @@ class GRPO(Algo):
         self.kl_ctl = algo_kwargs["kl_ctl"]
         self.kl_max = algo_kwargs["kl_max"]
         self.drgpo = algo_kwargs["drgrpo"]
+        self.rpp = algo_kwargs["rpp"]
         self.reward_func = reward_func
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -142,26 +147,13 @@ class GRPO(Algo):
         )
         ddp_state.print("Finished: ", (100.0 * np.sum(finished)) / len(finished), "%")
         ddp_state.print("====================================")
-
-        rewards = np.asarray(rewards).reshape(-1, self.k)
-        advantages = (rewards - rewards.mean(axis=1, keepdims=True))
-        if not self.drgpo:
-            advantages = advantages / (
-                rewards.std(axis=1, keepdims=True) + 1e-8
-            )
-        advantages = advantages.reshape(-1).tolist()
-
         query_response, query_response_mask, response_mask = create_joint_tensors(
             self.tokenizer,
             messages,
             responses,
             is_final=finished,
         )
-        advantages = torch.tensor(advantages, dtype=torch.float32)
-        self.stats.accumulate("avg_resp_length", response_mask.sum(1).float().mean().item())
-
-        # probabilities under the reference policy
-        self.ref_model.to(self.model.device)
+        
         ref_logprobs = get_logprobs(
             self.ref_model,
             query_response,
@@ -170,8 +162,6 @@ class GRPO(Algo):
             temperature=self.temperature,
             reduction="none",
         )
-        self.ref_model.to("cpu")
-        torch.cuda.empty_cache()
 
         # probabilities under the sampling policy
         old_logprobs = get_logprobs(
@@ -182,6 +172,19 @@ class GRPO(Algo):
             temperature=self.temperature,
             reduction="none",
         )
+
+        rewards = np.asarray(rewards).reshape(-1, self.k)
+        advantages = (rewards - rewards.mean(axis=1, keepdims=True))
+        if not self.drgpo:
+            advantages = advantages / (
+                rewards.std(axis=1, keepdims=True) + 1e-8
+            )
+        advantages = advantages.reshape(-1).tolist()
+
+        advantages = torch.tensor(advantages, dtype=torch.float32)
+        self.stats.accumulate("avg_resp_length", response_mask.sum(1).float().mean().item())
+
+        torch.cuda.empty_cache()
 
         return (
             query_response,
@@ -229,19 +232,28 @@ class GRPO(Algo):
             )
 
             # Compute the PPO-clip loss
-            log_ratio = (mb_logprobs - mb_old_logprobs)
-            ratio = torch.exp(log_ratio)
-
-            pg_losses1 = -mb_advantage.unsqueeze(1) * ratio
-            pg_losses2 = -mb_advantage.unsqueeze(1) * torch.clamp(ratio, 0.9, 1.1)
-            pg_losses = torch.max(pg_losses1, pg_losses2)
-
             labels_mask = mb_response_mask[:, 1:]
+
+            ref_new_ratio = mb_ref_logprobs - mb_logprobs
             per_token_kl = (
-                torch.exp(mb_ref_logprobs - mb_logprobs)
-                - (mb_ref_logprobs - mb_logprobs)
+                torch.exp(ref_new_ratio)
+                - (ref_new_ratio)
                 - 1
             )
+            per_token_kl = torch.clamp(
+                per_token_kl,
+                max=self.kl_max,
+            )
+
+            if self.rpp:
+                pg_losses = mb_logprobs * mb_advantage.unsqueeze(1)
+            else:
+                log_ratio = mb_logprobs - mb_old_logprobs
+                ratio = torch.exp(log_ratio)
+
+                pg_losses1 = mb_advantage.unsqueeze(1) * ratio
+                pg_losses2 = mb_advantage.unsqueeze(1) * torch.clamp(ratio, 0.9, 1.1)
+                pg_losses = -torch.min(pg_losses1, pg_losses2)
 
             per_token_loss = pg_losses + self.kl_ctl * per_token_kl
             pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()

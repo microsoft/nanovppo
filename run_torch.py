@@ -32,6 +32,7 @@ from dataset.math_utils import (
 from algos.rft import RFT
 from algos.grm import GenRM
 from algos.grpo import GRPO
+from algos.grpod import GRPOD
 from dataset.data_utils import (
     MultiTensorDataset,
     chunk_text,
@@ -72,9 +73,8 @@ models = {
 algos = {
     "rft": RFT,
     "grpo": GRPO,
+    "grpod": GRPOD,
     "vppo": VPPO,
-    "tpo": TPO,
-    "genrm": GenRM,
 }
 
 
@@ -217,7 +217,7 @@ def train(local_rank, world_size, args):
             optimizer,
             max_lr=args.lr,
             min_lr=1e-3 * args.lr,
-            warmup_steps=0.03 * total_steps,
+            warmup_steps=args.warmup_prop * total_steps,
             max_steps=total_steps,
         )
     elif args.sch == "constant_with_warmup":
@@ -225,7 +225,7 @@ def train(local_rank, world_size, args):
             optimizer,
             max_lr=args.lr,
             min_lr=args.lr,
-            warmup_steps=0.03 * total_steps,
+            warmup_steps=args.warmup_prop * total_steps,
             max_steps=total_steps,
         )
     else:
@@ -506,6 +506,12 @@ if __name__ == "__main__":
         type=float,
         help="Gradient checkpointing",
         default=1,
+    )
+    parser.add_argument(
+        "--warmup_prop",
+        type=float,
+        help="Warmup proportion",
+        default=0.,
     )
     parser.add_argument(
         "--wd",

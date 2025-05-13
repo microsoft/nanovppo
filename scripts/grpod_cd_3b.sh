@@ -1,5 +1,5 @@
 DIR="/data/alsordon/runs_outputs"
-NAME="grpo_cd_3b"
+NAME="grpod_cd_3b"
 
 python run_torch.py \
     -m q3i \
@@ -7,7 +7,8 @@ python run_torch.py \
     -t 1.0 \
     -k 4 \
     --lr 5e-6 \
-    -a grpo \
+    --guess_ctl 0.1 \
+    -a grpod \
     --dataset cd \
     --onlbsz 16 \
     --offbsz 8 \
