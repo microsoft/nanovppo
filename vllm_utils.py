@@ -25,7 +25,9 @@ from utils import DEFAULT_MAX_TOKENS, DEFAULT_TEMP, pack, repeat
 class VLLMGeneratorClient:
     _instance = None
 
-    def __init__(self, model_name, seed):
+    def __init__(self, model_name, seed, gpu_memory_utilization=0.2, tensor_parallel_size=1):
+        self.gpu_memory_utilization = gpu_memory_utilization
+        self.tensor_parallel_size = tensor_parallel_size
         self.model_name = model_name
         self.seed = seed
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -40,8 +42,8 @@ class VLLMGeneratorClient:
         self.llm = LLM(
             model=self.model_name,
             skip_tokenizer_init=False,
-            gpu_memory_utilization=0.2,
-            tensor_parallel_size=1,
+            gpu_memory_utilization=self.gpu_memory_utilization,
+            tensor_parallel_size=self.tensor_parallel_size,
             enable_prefix_caching=True,
             max_model_len=15616,
             swap_space=1,

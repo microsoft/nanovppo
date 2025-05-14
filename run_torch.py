@@ -329,6 +329,20 @@ def train(local_rank, world_size, args):
                 f"{args.o}/episode_data_{ddp_state.local_process_index}_{global_epoch}.pt",
             )
 
+        if hasattr(algo, "messages"):
+            # json dump messages and responses
+            with open(f"{args.o}/messages_{global_epoch}.json", "w") as f:
+                import json
+
+                json.dump(algo.messages, f)
+
+        if hasattr(algo, "responses"):
+            # json dump messages and responses
+            with open(f"{args.o}/responses_{global_epoch}.json", "w") as f:
+                import json
+
+                json.dump(algo.responses, f)
+
         # offline steps
         train_iterator = iter(dataloader)
         off_sampler = dataloader.sampler
