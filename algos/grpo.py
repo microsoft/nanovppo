@@ -22,7 +22,11 @@ from utils import (
     compute_kl_divergence,
 )
 
-from dataset.data_utils import create_joint_tensors, get_ending_tokens, pad_query_and_response
+from dataset.data_utils import (
+    create_joint_tensors,
+    get_ending_tokens,
+    pad_query_and_response,
+)
 from gen_utils import GeneratorClient
 from algos.algo import Algo, Request, RequestUtils
 from algos.rft import RFT
@@ -38,11 +42,13 @@ class GRPO(Algo):
             "--kl_max", type=int, default=10, help="Clip KL divergence to this value"
         )
         parser.add_argument(
-            "--rpp", type=int, default=0, help="If 1, use Reinforce++"
+            "--vocab",
+            type=str,
+            default=None,
+            help="Load restricted vocab from this file",
         )
-        parser.add_argument(
-            "--drgrpo", type=int, default=0, help="If 1, use DrGRPO"
-        )
+        parser.add_argument("--rpp", type=int, default=0, help="If 1, use Reinforce++")
+        parser.add_argument("--drgrpo", type=int, default=0, help="If 1, use DrGRPO")
         return parser
 
     def __init__(
@@ -59,19 +65,29 @@ class GRPO(Algo):
             model_name,
             torch_dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
-            device_map=device
+            device_map=device,
         )
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
             attn_implementation="flash_attention_2",
-            device_map=device
+            device_map=device,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name + "-Instruct" if "-Instruct" not in model_name else model_name,
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        if algo_kwargs["vocab"] is not None:
+            with open(algo_kwargs["vocab"], "r") as f:
+                import json
+
+                self.allowed_token_ids = [
+                    self.tokenizer.encode(t)[0] for t in json.load(f)
+                ]
+        else:
+            self.allowed_token_ids = None
 
         self.k = k
         self.kl_ctl = algo_kwargs["kl_ctl"]
@@ -93,6 +109,7 @@ class GRPO(Algo):
             temperature=self.temperature,
             n=self.k,
             max_tokens=self.max_tokens,
+            allowed_token_ids=self.allowed_token_ids,
             return_finished=True,
         )
         responses = flatten(responses)
@@ -153,7 +170,7 @@ class GRPO(Algo):
             responses,
             is_final=finished,
         )
-        
+
         ref_logprobs = get_logprobs(
             self.ref_model,
             query_response,
@@ -174,15 +191,15 @@ class GRPO(Algo):
         )
 
         rewards = np.asarray(rewards).reshape(-1, self.k)
-        advantages = (rewards - rewards.mean(axis=1, keepdims=True))
+        advantages = rewards - rewards.mean(axis=1, keepdims=True)
         if not self.drgpo:
-            advantages = advantages / (
-                rewards.std(axis=1, keepdims=True) + 1e-8
-            )
+            advantages = advantages / (rewards.std(axis=1, keepdims=True) + 1e-8)
         advantages = advantages.reshape(-1).tolist()
 
         advantages = torch.tensor(advantages, dtype=torch.float32)
-        self.stats.accumulate("avg_resp_length", response_mask.sum(1).float().mean().item())
+        self.stats.accumulate(
+            "avg_resp_length", response_mask.sum(1).float().mean().item()
+        )
 
         torch.cuda.empty_cache()
 
@@ -235,11 +252,7 @@ class GRPO(Algo):
             labels_mask = mb_response_mask[:, 1:]
 
             ref_new_ratio = mb_ref_logprobs - mb_logprobs
-            per_token_kl = (
-                torch.exp(ref_new_ratio)
-                - (ref_new_ratio)
-                - 1
-            )
+            per_token_kl = torch.exp(ref_new_ratio) - (ref_new_ratio) - 1
             per_token_kl = torch.clamp(
                 per_token_kl,
                 max=self.kl_max,
@@ -259,7 +272,8 @@ class GRPO(Algo):
             pg_loss = masked_mean(per_token_loss, labels_mask, axis=1).mean()
 
             self.stats.accumulate(
-                "entropy", -((mb_logprobs * labels_mask).sum() / labels_mask.sum()).item()
+                "entropy",
+                -((mb_logprobs * labels_mask).sum() / labels_mask.sum()).item(),
             )
             self.stats.accumulate(
                 "kl_loss", masked_mean(per_token_kl, labels_mask, axis=1).mean().item()
