@@ -84,6 +84,7 @@ class VLLMGeneratorClient:
         max_tokens=DEFAULT_MAX_TOKENS,
         n=1,
         return_finished=False,
+        allowed_token_ids=None,
     ):
         import requests
 
@@ -107,6 +108,7 @@ class VLLMGeneratorClient:
                 temperature=temperature,
                 top_p=top_p,
                 max_tokens=max_tokens,
+                allowed_token_ids=allowed_token_ids,
             ),
         )
 
