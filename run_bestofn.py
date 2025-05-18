@@ -38,8 +38,10 @@ from utils import (
     AccumulatorDict,
     CosineWarmupScheduler,
     copy_model_param,
+    flatten,
     param_ema,
     print_metrics,
+    repeat,
     save_args,
     setup_output_directory,
 )
@@ -93,7 +95,6 @@ def run_inference(local_rank: int, world_size: int, args):
     queries, labels = prepare_dataset(
         args.ss, split="test", subsample=args.subs, template=args.template
     )
-
     generator = GeneratorClient.get()
 
     responses = generator.chat(
@@ -103,6 +104,22 @@ def run_inference(local_rank: int, world_size: int, args):
         top_p=args.top_p if hasattr(args, "top_p") else 0.9,
         n=args.maxN,
     )
+
+    os.makedirs(args.o, exist_ok=True)
+    with open(os.path.join(args.o, "data.json"), "w") as f:
+        data = [
+            {
+                "query": query,
+                "response": response,
+                "label": label,
+                "correct": reward_fn(response, label[0], label[1]),
+            }
+            for query, response, label in zip(repeat(queries, args.maxN), flatten(responses), labels)
+        ]
+
+        import json
+        json.dump(data, f)
+
     corrects = [
         sum([reward_fn(response, gold[0], gold[1]) for response in response_array])
         for response_array, gold in zip(responses, labels)
@@ -116,12 +133,11 @@ def run_inference(local_rank: int, world_size: int, args):
     print(f"pass@k: {pass_at_k}")
 
     # store JSON result beside the model
-    os.makedirs(args.o, exist_ok=True)
     with open(os.path.join(args.o, "inference_stats.json"), "w") as f:
         import json
         json.dump(
             {
-                "ticks": range(1, args.maxN + 1),
+                "ticks": list(range(1, args.maxN + 1)),
                 "pass_at_k": pass_at_k,
             },
             f,
@@ -137,6 +153,8 @@ if __name__ == "__main__":
     parser.add_argument("-s", type=int, help="Seed", default=42)
     parser.add_argument("-maxN", type=int, help="Max pass@N", default=32)
     args = parser.parse_args()
+
+    assert args.o is not None, "Output directory must be specified"
 
     args_path = os.path.join(args.load_model, "args.json")
     if not os.path.isfile(args_path):
