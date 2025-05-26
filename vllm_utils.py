@@ -16,9 +16,10 @@ import tqdm
 
 from ddp_utils import ddp_state
 from transformers import AutoTokenizer
-from vllm.worker.worker import Worker
+# Defer vllm import to when it's actually needed
+# from vllm.worker.worker import Worker
+# from vllm import LLM, SamplingParams
 
-from vllm import LLM, SamplingParams
 from utils import DEFAULT_MAX_TOKENS, DEFAULT_TEMP, pack, repeat
 
 
@@ -26,6 +27,13 @@ class VLLMGeneratorClient:
     _instance = None
 
     def __init__(self, model_name, seed):
+        # Import vllm here to avoid import errors when not using VLLM
+        try:
+            from vllm import LLM, SamplingParams
+            from vllm.worker.worker import Worker
+        except ImportError:
+            print("Warning: vllm not installed. VLLMGeneratorClient will not work.")
+            
         self.model_name = model_name
         self.seed = seed
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)

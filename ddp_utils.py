@@ -10,8 +10,10 @@ from torch.distributed import broadcast_object_list, init_process_group
 
 # total number of gpus
 num_gpus = torch.cuda.device_count()
+# Allow running in CPU-only mode for testing
 if num_gpus == 0:
-    raise RuntimeError("No GPUs found!")
+    print("Warning: No GPUs found! Running in CPU-only mode.")
+    num_gpus = 1
 
 # deactivate this to avoid painful messages
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -25,7 +27,7 @@ class DDPState:
     ddp_rank: int = 0
     ddp_local_rank: int = 0
     ddp_world_size: int = 1
-    device: str = "cuda:0"
+    device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
     is_main_process: bool = True
     local_process_index: int = 0
     process_index: int = 0
@@ -97,8 +99,11 @@ def init_ddp(local_rank=0, world_size=1):
     ddp_state.local_process_index = int(local_rank)
     ddp_state.process_index = int(local_rank)
     ddp_state.num_processes = world_size
-    ddp_state.device = f"cuda:{ddp_state.ddp_local_rank}"
-    torch.cuda.set_device(ddp_state.device)
+    if torch.cuda.is_available():
+        ddp_state.device = f"cuda:{ddp_state.ddp_local_rank}"
+        torch.cuda.set_device(ddp_state.device)
+    else:
+        ddp_state.device = "cpu"
     ddp_state.is_main_process = ddp_state.ddp_rank == 0
     print("Running in DDP mode!")
     print(ddp_state)
