@@ -1,3 +1,17 @@
+"""
+Script to evaluate a previously trained model using the pass@N metric.
+
+This script loads a model from a specified directory and evaluates it by generating 
+N responses for each test prompt. It then computes the pass@N metrics, which measure 
+the probability of getting a correct answer if we sample N responses and take the 
+best one.
+
+Usage:
+    python run_bestofn.py --load_model <model_dir> -o <output_dir> -s <seed> -maxN <max_n>
+
+Example:
+    python run_bestofn.py --load_model ./runs_outputs/model_42 -o ./runs_outputs/bestofn -s 42 -maxN 32
+"""
 import argparse
 from contextlib import contextmanager
 import os
@@ -57,7 +71,18 @@ def get_algo_kwargs(args, klass):
 
 def estimator(n: int, c: int, k: int) -> float:
     """
-    Calculates 1 - comb(n - c, k) / comb(n, k).
+    Calculates the pass@k metric: 1 - comb(n - c, k) / comb(n, k).
+    
+    This estimates the probability of getting at least one correct answer
+    if we sample k responses out of n, given that c responses are correct.
+    
+    Args:
+        n: Total number of responses generated per question
+        c: Number of correct responses for a particular question
+        k: Number of responses to sample (k <= n)
+        
+    Returns:
+        float: Estimated pass@k probability
     """
     if n - c < k:
         return 1.0
