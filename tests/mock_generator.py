@@ -1,4 +1,14 @@
-"""Mock implementation of the GeneratorClient for testing."""
+"""Mock implementation of the GeneratorClient for testing.
+
+This module provides a mock implementation of the GeneratorClient used by GRPO and other
+algorithms in the nanovppo library. It simulates the behavior of a language model by
+returning predefined responses, allowing for testing without requiring a real model.
+
+Key features:
+- Returns predetermined responses to simulate model generation
+- Configurable "finished" flags to simulate complete/incomplete responses
+- Implements the same interface as the actual GeneratorClient
+"""
 
 from typing import List, Optional, Tuple, Any
 

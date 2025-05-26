@@ -1,5 +1,15 @@
 #!/usr/bin/env python
-"""Run end-to-end test for GRPO algorithm."""
+"""Run end-to-end test for GRPO algorithm.
+
+This script runs the end-to-end tests for the GRPO (Generative Reward Policy Optimization) 
+algorithm. It initializes the test environment and executes the TestGRPO test suite.
+
+To run the tests:
+    python -m tests.run_grpo_test
+    
+The tests verify that GRPO's core functionality works as expected, using mock objects
+to avoid dependencies on actual language models.
+"""
 
 import os
 import sys

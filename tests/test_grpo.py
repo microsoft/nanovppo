@@ -1,4 +1,13 @@
-"""End-to-end test for GRPO algorithm."""
+"""End-to-end test for GRPO algorithm.
+
+This module contains unit tests for the GRPO (Generative Reward Policy Optimization) algorithm.
+It tests the core functionality of the algorithm, particularly:
+1. gather_episodes - Collects responses, calculates rewards and prepares tensors for training
+2. compute_loss - Processes the tensors and calculates loss for optimization
+
+The tests use mocking to isolate the GRPO functionality from external dependencies
+like language models and reward functions.
+"""
 
 import os
 import sys

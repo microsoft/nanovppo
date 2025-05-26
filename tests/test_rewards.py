@@ -1,4 +1,10 @@
-"""Simple reward functions for testing."""
+"""Simple reward functions for testing.
+
+This module provides simplified reward functions for testing GRPO and other
+reinforcement learning algorithms in the nanovppo library. These functions
+calculate rewards based on simple criteria like word count, avoiding the
+need for complex evaluation metrics during testing.
+"""
 
 from typing import List
 
