@@ -18,16 +18,7 @@ from tqdm import tqdm
 from accelerate import Accelerator
 
 from algos.vppo import VPPO
-from dataset.arc_utils import compute_arc_reward, eval_arc, prepare_arc_dataset
-from dataset.cd_utils import compute_cd_reward, eval_cd, prepare_cd_dataset
-from dataset.gsm8k_utils import compute_gsm8k_reward, eval_gsm8k, prepare_gsm8k_dataset
-from dataset.math_utils import (
-    compute_lcot_math_reward,
-    compute_math_reward,
-    compute_qst_math_reward,
-    eval_math,
-    prepare_math_dataset,
-)
+from dataset.registry import get_dataset_info
 from algos.rft import RFT
 from algos.grpo import GRPO
 from dataset.data_utils import (
@@ -105,29 +96,17 @@ def train(local_rank, world_size, args):
     random.seed(args.s)
 
     # dataset setup + rewards
-    if args.dataset == "math":
-        prepare_dataset = prepare_math_dataset
-        eval_dataset = eval_math
-        if args.template == "lcot":
-            reward_func = compute_lcot_math_reward
-        elif args.template == "cot":
-            reward_func = compute_math_reward
-        else:
-            reward_func = compute_qst_math_reward
-    elif args.dataset == "gsm8k":
-        prepare_dataset = prepare_gsm8k_dataset
-        eval_dataset = eval_gsm8k
-        reward_func = compute_gsm8k_reward
-    elif args.dataset == "arc":
-        prepare_dataset = prepare_arc_dataset
-        eval_dataset = eval_arc
-        reward_func = compute_arc_reward
-    elif args.dataset == "cd":
-        prepare_dataset = prepare_cd_dataset
-        eval_dataset = eval_cd
-        reward_func = compute_cd_reward
-    else:
-        raise ValueError("Unknown dataset!")
+    # Get dataset functions from the registry
+    try:
+        dataset_info = get_dataset_info(args.dataset)
+        prepare_dataset = dataset_info.prepare_dataset
+        eval_dataset = dataset_info.eval_dataset
+        reward_func = dataset_info.get_reward_func(args.template)
+    except ValueError as e:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
+        
+    if args.t500 and args.dataset != "math":
+        raise ValueError("t500 only available with MATH dataset!")
 
     if args.o == "auto":
         # create a timestamp
