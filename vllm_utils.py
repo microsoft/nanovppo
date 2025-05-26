@@ -16,8 +16,9 @@ import tqdm
 
 from ddp_utils import ddp_state
 from transformers import AutoTokenizer
-from vllm.worker.worker import Worker
-from vllm import LLM, SamplingParams
+# Defer vllm import to when it's actually needed
+# from vllm.worker.worker import Worker
+# from vllm import LLM, SamplingParams
 
 from utils import DEFAULT_MAX_TOKENS, DEFAULT_TEMP, pack, repeat
 
