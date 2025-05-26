@@ -120,12 +120,14 @@ class TestGRPO(unittest.TestCase):
         ]
         labels = ["42", "4"]
         
-        # Mock the create_joint_tensors function to return fixed tensors
-        with patch('algos.grpo.create_joint_tensors', return_value=(
-            torch.ones((4, 10), dtype=torch.long),  # query_response
-            torch.ones((4, 10), dtype=torch.long),  # query_response_mask
-            torch.ones((4, 10), dtype=torch.long)   # response_mask
-        )), patch('algos.grpo.get_logprobs', return_value=torch.zeros((4, 9))):
+        # Patch utils.flatten to work correctly with our mocked values
+        with patch('algos.grpo.flatten', side_effect=lambda x: [item for sublist in x for item in sublist]), \
+             patch('algos.grpo.create_joint_tensors', return_value=(
+                torch.ones((4, 10), dtype=torch.long),  # query_response
+                torch.ones((4, 10), dtype=torch.long),  # query_response_mask
+                torch.ones((4, 10), dtype=torch.long)   # response_mask
+             )), \
+             patch('algos.grpo.get_logprobs', return_value=torch.zeros((4, 9))):
             # Call gather_episodes
             episode_data = grpo.gather_episodes(messages, labels)
             

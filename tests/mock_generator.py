@@ -35,7 +35,7 @@ class MockGeneratorClient:
         n: int = 1,
         allowed_token_ids: Optional[List[int]] = None,
         return_finished: bool = False,
-    ) -> Tuple[List[List[str]], Optional[List[bool]]]:
+    ) -> Tuple[List[List[str]], Optional[List[List[bool]]]]:
         """Mock chat method that returns predetermined responses.
         
         Args:
@@ -60,7 +60,7 @@ class MockGeneratorClient:
             message_finished = [self.finished[0] for _ in range(n)]
             
             all_responses.append(message_responses)
-            all_finished.extend(message_finished)
+            all_finished.append(message_finished)
             
         if return_finished:
             return all_responses, all_finished
