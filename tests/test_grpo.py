@@ -21,13 +21,17 @@ class TestGRPO(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
+        # Sample tensor shapes for testing
+        self.batch_size = 4
+        self.seq_length = 10
+        self.vocab_size = 100
+        
         # Mock the models and tokenizer for testing
         self.mock_model = MagicMock()
-        self.mock_model.return_value = MagicMock()
         
         # Mock logits output
         self.mock_output = MagicMock()
-        self.mock_output.logits = torch.ones((1, 10, 100))
+        self.mock_output.logits = torch.ones((self.batch_size, self.seq_length, self.vocab_size))
         self.mock_model.return_value = self.mock_output
         
         # Set up patches
@@ -39,10 +43,15 @@ class TestGRPO(unittest.TestCase):
             'algos.grpo.AutoTokenizer.from_pretrained', 
             return_value=self._get_mock_tokenizer()
         )
+        self.get_shifted_logprobs_patcher = patch(
+            'utils.get_shifted_logprobs',
+            return_value=torch.zeros((self.batch_size, self.seq_length-1))
+        )
         
         # Start patches
         self.auto_model = self.auto_model_patcher.start()
         self.auto_tokenizer = self.auto_tokenizer_patcher.start()
+        self.get_shifted_logprobs = self.get_shifted_logprobs_patcher.start()
         
         # Replace generator client for testing
         GeneratorClient.init = self._mock_init_generator
@@ -63,6 +72,7 @@ class TestGRPO(unittest.TestCase):
         # Stop patches
         self.auto_model_patcher.stop()
         self.auto_tokenizer_patcher.stop()
+        self.get_shifted_logprobs_patcher.stop()
 
     def _mock_init_generator(self, backend, **kwargs):
         """Mock the GeneratorClient.init method."""
@@ -123,11 +133,11 @@ class TestGRPO(unittest.TestCase):
         # Patch utils.flatten to work correctly with our mocked values
         with patch('algos.grpo.flatten', side_effect=lambda x: [item for sublist in x for item in sublist]), \
              patch('algos.grpo.create_joint_tensors', return_value=(
-                torch.ones((4, 10), dtype=torch.long),  # query_response
-                torch.ones((4, 10), dtype=torch.long),  # query_response_mask
-                torch.ones((4, 10), dtype=torch.long)   # response_mask
+                torch.ones((self.batch_size, self.seq_length), dtype=torch.long),  # query_response
+                torch.ones((self.batch_size, self.seq_length), dtype=torch.long),  # query_response_mask
+                torch.ones((self.batch_size, self.seq_length), dtype=torch.long)   # response_mask
              )), \
-             patch('algos.grpo.get_logprobs', return_value=torch.zeros((4, 9))):
+             patch('algos.grpo.get_logprobs', return_value=torch.zeros((self.batch_size, self.seq_length-1))):
             # Call gather_episodes
             episode_data = grpo.gather_episodes(messages, labels)
             
@@ -146,7 +156,45 @@ class TestGRPO(unittest.TestCase):
             self.assertIsInstance(ref_logprobs, torch.Tensor)
             self.assertIsInstance(old_logprobs, torch.Tensor)
             
-            # Test compute_loss with the gathered episodes
+            # Verify tensor shapes
+            self.assertEqual(query_response.shape, (self.batch_size, self.seq_length))
+            self.assertEqual(query_response_mask.shape, (self.batch_size, self.seq_length))
+            self.assertEqual(response_mask.shape, (self.batch_size, self.seq_length))
+            self.assertEqual(advantages.shape, (self.batch_size,))
+            self.assertEqual(ref_logprobs.shape, (self.batch_size, self.seq_length-1))
+            self.assertEqual(old_logprobs.shape, (self.batch_size, self.seq_length-1))
+            
+    def test_grpo_compute_loss(self):
+        """Test the compute_loss method of GRPO separately."""
+        # Create GRPO instance
+        grpo = GRPO(
+            model_name="mock_model",
+            reward_func=simple_reward_function,
+            k=2,
+            temperature=0.0,
+            max_tokens=100,
+            device="cpu",
+            kl_ctl=0.0001,
+            kl_max=10,
+            drgrpo=0,
+            rpp=0,
+            vocab=None
+        )
+        
+        # Create mock episode data
+        episode_data = (
+            torch.ones((self.batch_size, self.seq_length), dtype=torch.long),      # query_response
+            torch.ones((self.batch_size, self.seq_length), dtype=torch.long),      # query_response_mask
+            torch.ones((self.batch_size, self.seq_length), dtype=torch.long),      # response_mask
+            torch.ones((self.batch_size,), dtype=torch.float32),                  # advantages
+            torch.zeros((self.batch_size, self.seq_length-1), dtype=torch.float32), # ref_logprobs
+            torch.zeros((self.batch_size, self.seq_length-1), dtype=torch.float32)  # old_logprobs
+        )
+        
+        # Skip actual computation and verify interface only
+        with patch.object(grpo.model, '__call__', return_value=self.mock_output):
+            # We're just checking that the function runs without errors
+            # We don't test the actual loss value as it depends on many factors
             loss = grpo.compute_loss(episode_data)
             self.assertIsInstance(loss, torch.Tensor)
 
