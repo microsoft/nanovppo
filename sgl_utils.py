@@ -14,7 +14,8 @@ import requests
 import torch
 import tqdm
 from transformers import AutoTokenizer
-from vllm.worker.worker import Worker
+# Defer vllm import to when it's actually needed
+# from vllm.worker.worker import Worker
 
 from ddp_utils import ddp_state
 from utils import DEFAULT_MAX_TOKENS, DEFAULT_TEMP, pack, repeat
