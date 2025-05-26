@@ -103,7 +103,7 @@ def run_inference(local_rank: int, world_size: int, args):
     try:
         dataset_info = get_dataset_info(args.dataset)
         prepare_dataset = dataset_info.prepare_dataset
-        reward_fn = dataset_info.get_reward_func(args.template)
+        score_fn = dataset_info.get_score_func(args.template)
     except ValueError as e:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
@@ -127,7 +127,7 @@ def run_inference(local_rank: int, world_size: int, args):
                 "query": query,
                 "response": response,
                 "label": label,
-                "correct": reward_fn(response, label[0], label[1]),
+                "correct": score_fn(response, label[0], label[1]),
             }
             for query, response, label in zip(repeat(queries, args.maxN), flatten(responses), labels)
         ]
@@ -136,7 +136,7 @@ def run_inference(local_rank: int, world_size: int, args):
         json.dump(data, f)
 
     corrects = [
-        sum([reward_fn(response, gold[0], gold[1]) for response in response_array])
+        sum([score_fn(response, gold[0], gold[1]) for response in response_array])
         for response_array, gold in zip(responses, labels)
     ]
 

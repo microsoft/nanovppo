@@ -109,6 +109,26 @@ def eval_cd(questions, answers, temperature=0.0, top_p=1.0, max_tokens=1024):
     return correct
 
 
+def compute_cd_score(requests: List[Request]) -> List[float]:
+    """
+    Evaluates CD responses based solely on correctness without format reward.
+    Used for evaluation metrics like pass@k.
+    
+    Args:
+        requests: List of Request objects with responses and labels
+        
+    Returns:
+        List of reward scores based only on mathematical correctness
+    """
+    rewards = []
+    for request in requests:
+        response = request.response
+        label = request.label
+        answer_reward = correctness_reward(response, label[0], label[1])
+        rewards.append(answer_reward)
+    return rewards
+
+
 def compute_cd_reward(requests: List[Request]) -> List[float]:
     rewards = []
     for request in requests:

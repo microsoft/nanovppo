@@ -18,7 +18,7 @@ from dataset.math_utils import (
 )
 from dataset.gsm8k_utils import prepare_gsm8k_dataset, eval_gsm8k, compute_gsm8k_reward
 from dataset.arc_utils import prepare_arc_dataset, eval_arc, compute_arc_reward
-from dataset.cd_utils import prepare_cd_dataset, eval_cd, compute_cd_reward
+from dataset.cd_utils import prepare_cd_dataset, eval_cd, compute_cd_reward, compute_cd_score
 
 
 class DatasetInfo:
@@ -29,7 +29,9 @@ class DatasetInfo:
         prepare_dataset: Callable,
         eval_dataset: Callable,
         reward_func: Callable,
+        score_func: Optional[Callable] = None,
         template_specific_rewards: Optional[Dict[str, Callable]] = None,
+        template_specific_scores: Optional[Dict[str, Callable]] = None,
     ):
         """
         Initialize a DatasetInfo object.
@@ -37,17 +39,21 @@ class DatasetInfo:
         Args:
             prepare_dataset: Function to prepare the dataset
             eval_dataset: Function to evaluate the dataset
-            reward_func: Default reward function for the dataset
+            reward_func: Default reward function for the dataset (used for training)
+            score_func: Default scoring function for evaluation (if None, uses reward_func)
             template_specific_rewards: Optional dict mapping template names to reward functions
+            template_specific_scores: Optional dict mapping template names to scoring functions
         """
         self.prepare_dataset = prepare_dataset
         self.eval_dataset = eval_dataset
         self.reward_func = reward_func
+        self.score_func = score_func if score_func is not None else reward_func
         self.template_specific_rewards = template_specific_rewards or {}
+        self.template_specific_scores = template_specific_scores or {}
     
     def get_reward_func(self, template: str = None) -> Callable:
         """
-        Get the reward function for the specified template.
+        Get the reward function for the specified template (used for training).
         
         Args:
             template: Template name to get the reward function for
@@ -58,6 +64,20 @@ class DatasetInfo:
         if template and template in self.template_specific_rewards:
             return self.template_specific_rewards[template]
         return self.reward_func
+        
+    def get_score_func(self, template: str = None) -> Callable:
+        """
+        Get the scoring function for the specified template (used for evaluation).
+        
+        Args:
+            template: Template name to get the scoring function for
+            
+        Returns:
+            The scoring function for the specified template, or the default scoring function
+        """
+        if template and template in self.template_specific_scores:
+            return self.template_specific_scores[template]
+        return self.score_func
 
 
 # Registry mapping dataset names to DatasetInfo objects
@@ -69,7 +89,9 @@ def register_dataset(
     prepare_dataset: Callable,
     eval_dataset: Callable,
     reward_func: Callable,
+    score_func: Optional[Callable] = None,
     template_specific_rewards: Optional[Dict[str, Callable]] = None,
+    template_specific_scores: Optional[Dict[str, Callable]] = None,
 ) -> None:
     """
     Register a dataset with the registry.
@@ -78,14 +100,18 @@ def register_dataset(
         name: Name of the dataset
         prepare_dataset: Function to prepare the dataset
         eval_dataset: Function to evaluate the dataset
-        reward_func: Default reward function for the dataset
+        reward_func: Default reward function for the dataset (used for training)
+        score_func: Default scoring function for evaluation (if None, uses reward_func)
         template_specific_rewards: Optional dict mapping template names to reward functions
+        template_specific_scores: Optional dict mapping template names to scoring functions
     """
     _DATASET_REGISTRY[name] = DatasetInfo(
         prepare_dataset, 
         eval_dataset, 
         reward_func,
+        score_func,
         template_specific_rewards,
+        template_specific_scores,
     )
 
 
@@ -139,4 +165,5 @@ register_dataset(
     prepare_cd_dataset,
     eval_cd,
     compute_cd_reward,
+    compute_cd_score,
 )
