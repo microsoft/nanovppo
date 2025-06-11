@@ -201,7 +201,8 @@ def train(local_rank, world_size, args):
         )
     ddp_state.print(torch.cuda.mem_get_info())
 
-    total_steps = max_epochs * max_off_epochs
+    # total steps across trainer processes
+    total_steps = (max_epochs * max_off_epochs * args.onlbsz * args.k) // args.offbsz
 
     ddp_state.print("Num episodes per epoch (per GPU):", args.onlbsz)
     ddp_state.print("Max epochs:", max_epochs)
