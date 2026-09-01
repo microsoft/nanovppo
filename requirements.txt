@@ -1,4 +1,4 @@
-sglang==0.4.4.post4
+sglang==0.5.10rc0
 torch==2.5.1
 flash_attn
 accelerate
