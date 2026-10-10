@@ -6,4 +6,4 @@ transformers==4.48.2
 vllm==0.7.3
 numpy
 bitsandbytes==0.43.3
-datasets==3.0.1
+datasets==5.0.1
